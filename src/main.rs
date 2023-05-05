@@ -32,10 +32,14 @@ fn main() {
     let rom_header = parse_rom_header(&rom_data);
 
     // 打印文件头信息
-    println!("prg_rom_size: {} x 16kb, chr_rom_size: {} x 8kb, mapper_id: {}",
+    println!("prg_rom_size: {} x 16kb, chr_rom_size: {} x 8kb, mapper_id: {}, mirroring_type: {}, battery_backed_ram: {}, trainer: {}, nes2_0: {}",
              rom_header.prg_rom_size / 16 / 1024,
              rom_header.chr_rom_size / 8 / 1024,
-             rom_header.mapper_number);
+             rom_header.mapper_number,
+             rom_header.mirroring_type,
+             rom_header.battery_backed_ram,
+             rom_header.trainer,
+             rom_header.nes2_0);
     let mapper_id = rom_header.mapper_number;
     let (prg_rom, chr_rom) = parse_prg_and_chr_rom_data(&rom_data);
 
