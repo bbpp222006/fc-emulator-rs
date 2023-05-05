@@ -12,26 +12,50 @@ pub struct Memory {
 }
 
 impl Memory {
+    // Memory 构造函数
     pub fn new(mapper: Box<dyn Mapper>) -> Self {
         Memory { mapper }
     }
 
-    // 读取8位数据
-    pub fn read_byte(&self, address: u16) -> u8 {
-        self.mapper.read(address)
+    // 从内存地址读取一个字节
+    pub fn read_byte(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => {
+                // CPU 内存，未实现
+                0
+            }
+            0x8000..=0xFFFF => {
+                // PRG-ROM
+                self.mapper.read_prg_rom(addr)
+            }
+            _ => 0, // 不可能的地址范围
+        }
     }
 
-    // 写入8位数据
-    pub fn write_byte(&mut self, address: u16, value: u8) {
-        self.mapper.write(address, value);
+    // 向内存地址写入一个字节
+    pub fn write_byte(&mut self, addr: u16, data: u8) {
+        match addr {
+            0x0000..=0x1FFF => {
+                // CPU 内存，未实现
+            }
+            0x8000..=0xFFFF => {
+                // PRG-ROM
+                self.mapper.write_prg_rom(addr, data);
+            }
+            _ => {} // 不可能的地址范围
+        }
     }
 }
 
-pub fn create_mapper(mapper_id: u8, prg_rom: Vec<u8>, chr_rom: Vec<u8>) -> Box<dyn Mapper> {
+pub fn create_mapper(
+    mapper_id: u8,
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    mirror_mode: u8,
+) -> Box<dyn Mapper> {
     match mapper_id {
-        0 => Box::new(NromMapper::new(prg_rom, chr_rom)),
-        // 1 => Box::new(Mmc1Mapper::new(prg_rom, chr_rom)),
-        // 在这里添加其他映射器类型的实例创建代码
+        0 => Box::new(NromMapper::new(prg_rom, chr_rom, mirror_mode)),
+        // 在这里添加其他 Mapper 的实现
         _ => panic!("Unsupported mapper ID: {}", mapper_id),
     }
 }
