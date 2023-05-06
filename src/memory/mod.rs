@@ -18,7 +18,7 @@ impl Memory {
     }
 
     // 从内存地址读取一个字节
-    pub fn read_byte(&self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => {
                 // CPU 内存，未实现
@@ -33,7 +33,7 @@ impl Memory {
     }
 
     // 向内存地址写入一个字节
-    pub fn write_byte(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1FFF => {
                 // CPU 内存，未实现
@@ -44,6 +44,23 @@ impl Memory {
             }
             _ => {} // 不可能的地址范围
         }
+    }
+
+    // 从内存地址读取一个 16 位字
+    pub fn read_u16(&self, address: u16) -> u16 {
+        let low_byte = self.read(address) as u16;
+        let high_byte = self.read(address + 1) as u16;
+        (high_byte << 8) | low_byte
+    }
+
+
+     // 用于单元测试的 from_data 方法
+     pub fn from_data(data: Vec<u8>) -> Self {
+        // 创建一个简单的 NROM Mapper 实例
+        let mapper = Box::new(NromMapper::new(data, vec![], 0));
+
+        // 使用 NROM Mapper 实例创建一个 Memory 实例
+        Memory { mapper }
     }
 }
 

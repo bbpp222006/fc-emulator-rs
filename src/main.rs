@@ -6,6 +6,7 @@ use std::io::Read;
 // 导入所需的模块
 mod memory;
 mod utils;
+mod cpu;
 use memory::{create_mapper, Memory};
 use utils::{parse_rom_header, parse_prg_and_chr_rom_data, parse_interrupt_vectors};
 
@@ -46,13 +47,14 @@ fn main() {
 
     // 使用创建好的映射器实例初始化Memory结构体
     let memory = Memory::new(mapper);
-
     
-
+    // 读取各个中断向量的指向的地址，并反编译查看指令
+    let mut disassembler = cpu::disassembler::Disassembler::new(memory, interrupt_vectors.reset_vector, interrupt_vectors.reset_vector + 0x100);
+    let (disassembly, next_address) = disassembler.disassemble_instruction(interrupt_vectors.reset_vector);
+    println!("{:04X}: {}", interrupt_vectors.reset_vector, disassembly);
+    
 
     // ... 略过其他代码 ...
 }
 
 
-
-// ... 略过其他代码 ...
