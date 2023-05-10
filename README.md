@@ -15,3 +15,6 @@ nestest.nes是一个测试文件, 说明文档：http://www.qmtpro.com/~nes/misc
 # 进度
 
 - [x] rom加载与解析
+- [x] cpu指令解析
+- [x] cpu基础、流程指令模拟
+- [ ] cpu拓展指令模拟
