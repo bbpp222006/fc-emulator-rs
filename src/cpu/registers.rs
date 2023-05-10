@@ -8,7 +8,19 @@ pub struct Registers {
     pub y: u8,        // Y 寄存器
     pub pc: u16,      // 程序计数器
     pub sp: u8,       // 栈指针
-    pub status: u8,   // 状态寄存器
+    pub p: u8,   // 状态寄存器
+}
+
+#[derive(Copy, Clone)]
+pub enum StatusFlags {
+    Carry = 1 << 0,
+    Zero = 1 << 1,
+    InterruptDisable = 1 << 2,
+    DecimalMode = 1 << 3,
+    BreakCommand = 1 << 4,
+    Unused = 1 << 5,
+    Overflow = 1 << 6,
+    Negative = 1 << 7,
 }
 
 impl Registers {
@@ -18,23 +30,25 @@ impl Registers {
             a: 0,
             x: 0,
             y: 0,
-            pc: 0,
-            sp: 0,
-            status: 0,
+            pc: 0xC000,
+            sp: 0xFD,
+            p: 0x24,
         }
     }
 
     /// 设置状态寄存器的某个标志位
-    pub fn set_flag(&mut self, flag: u8, value: bool) {
+    pub fn set_flag(&mut self, flag: StatusFlags, value: bool) {
+        let flag = flag as u8;
         if value {
-            self.status |= flag;
+            self.p |= flag;
         } else {
-            self.status &= !flag;
+            self.p &= !flag;
         }
     }
 
     /// 获取状态寄存器的某个标志位
-    pub fn get_flag(&self, flag: u8) -> bool {
-        (self.status & flag) != 0
+    pub fn get_flag(&self, flag: StatusFlags) -> bool {
+        let flag = flag as u8;
+        (self.p & flag) != 0
     }
 }

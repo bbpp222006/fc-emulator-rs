@@ -2,6 +2,7 @@
 
 // 引入标准库中的类型和特质
 use std::fmt;
+use crate::memory::RomHeader;
 
 // 定义一个通用的 Mapper trait
 pub trait Mapper: fmt::Debug {
@@ -13,7 +14,19 @@ pub trait Mapper: fmt::Debug {
     fn reset(&mut self);
 }
 
-// PPU 镜像模式枚举
+
+pub fn create_mapper(
+    rom_header: RomHeader,
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+) -> Box<dyn Mapper> {
+    match rom_header.mapper_number {
+        0 => Box::new(NromMapper::new(prg_rom, chr_rom, rom_header.mirroring_type)),
+        // 在这里添加其他 Mapper 的实现
+        _ => panic!("Unsupported mapper ID: {}", rom_header.mapper_number),
+    }
+}
+
 
 // 定义 NromMapper 结构体
 #[derive(Debug)]

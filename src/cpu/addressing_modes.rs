@@ -2,7 +2,9 @@
 // src/cpu/addressing_modes.rs
 
 use crate::memory::Memory;
-use crate::cpu::registers::Registers;
+use crate::cpu::registers::{Registers,StatusFlags};
+pub use std::fmt::Write;
+
 
 /// 6502 CPU 的寻址模式枚举
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -22,70 +24,103 @@ pub enum AddressingMode {
     Relative,// 相对寻址
 }
 
+
+
+ //页面交叉判断
+ fn check_page_boundary_crossed(addr1: u16, addr2: u16) -> bool {
+    (addr1 & 0xFF00) != (addr2 & 0xFF00)
+}
+
 impl AddressingMode {
-    /// 获取操作数及下一条指令的地址
+
+    pub fn operand_size(&self) -> u16 {
+        use AddressingMode::*;
+        match self {
+            Implied|Accumulator => 1,
+            Immediate|ZeroPage|ZeroPageX|ZeroPageY|IndirectX|IndirectY|Relative => 2,
+            Absolute|AbsoluteX|AbsoluteY|Indirect => 3,
+        }
+    }
+
+    /// 返回(操作数的地址，页面是否交叉)
     pub fn get_operand(
         &self,
         memory: &Memory,
         registers: &Registers,
         address: u16,
-    )-> (Option<u16>, u16) {
+    )-> (u16,bool) {
+        let mut operand_address = 0;
+        let mut page_crossed = false;
         match *self {
-            AddressingMode::Implied => (None, address),
-            AddressingMode::Accumulator => (None, address),
-            AddressingMode::Immediate => (Some(memory.read(address) as u16), address + 1),
+            AddressingMode::Implied|AddressingMode::Accumulator => (),
+            AddressingMode::Immediate => {
+                operand_address = address;
+            }
             AddressingMode::Absolute => {
-                let operand_address = memory.read_u16(address);
-                let operand = memory.read_u16(operand_address);
-                (Some(operand), address + 2)
+                operand_address = memory.read_u16(address);
             }
             AddressingMode::AbsoluteX => {
                 let base_address = memory.read_u16(address);
-                let operand_address = base_address + registers.x as u16;
-                let operand = memory.read_u16(operand_address);
-                (Some(operand), address + 2)
+                operand_address = base_address + registers.x as u16;
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
             }
             AddressingMode::AbsoluteY => {
-                let base = memory.read_u16(address);
-                let operand = base + registers.y as u16;
-                (Some(operand), address + 2)
+                let base_address = memory.read_u16(address);
+                operand_address = base_address.wrapping_add(registers.y as u16);
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
             }
             AddressingMode::ZeroPage => {
-                let operand = memory.read(address) as u16;
-                (Some(operand), address + 1)
+                operand_address = memory.read(address) as u16;
             }
             AddressingMode::ZeroPageX => {
-                let base = memory.read(address) as u16;
-                let operand = (base + registers.x as u16) & 0xFF;
-                (Some(operand), address + 1)
+                let base_address = memory.read(address) as u16;
+                operand_address = (base_address + registers.x as u16)& 0x00FF;
             }
             AddressingMode::ZeroPageY => {
-                let base = memory.read(address) as u16;
-                let operand = (base + registers.y as u16) & 0xFF;
-                (Some(operand), address + 1)
+                let base_address = memory.read(address) as u16;
+                operand_address = (base_address + registers.y as u16)& 0x00FF;
             }
             AddressingMode::Indirect => {
-                let pointer = memory.read_u16(address);
-                let operand = memory.read_u16(pointer);
-                (Some(operand), address + 2)
+                let operand_address_address = memory.read_u16(address);
+                let low_byte = memory.read(operand_address_address);
+                let high_byte = if operand_address_address & 0x00FF == 0x00FF {
+                    memory.read(operand_address_address & 0xFF00)
+                } else {
+                    memory.read(operand_address_address + 1)
+                };
+                operand_address = (high_byte as u16) << 8 | low_byte as u16;
             }
             AddressingMode::IndirectX => {
-                let base = memory.read(address);
-                let pointer = (base as u16 + registers.x as u16) & 0xFF;
-                let operand = memory.read_u16(pointer);
-                (Some(operand), address + 1)
+                let base_address = memory.read(address);
+                operand_address = memory.read_u16_z(base_address.wrapping_add(registers.x));
             }
             AddressingMode::IndirectY => {
-                let base = memory.read(address);
-                let pointer = base as u16;
-                let operand = memory.read_u16(pointer) + registers.y as u16;
-                (Some(operand), address + 1)
+                let base_address_address = memory.read(address);
+                let base_address = memory.read_u16_z(base_address_address);
+                operand_address = base_address.wrapping_add(registers.y as u16) ;
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
             }
             AddressingMode::Relative => {
-                let offset = memory.read(address) as i8;
-                let operand = (address as i32 + offset as i32 + 1) as u16;
-                (Some(operand), address + 1)
+                let init_offset = memory.read(address);
+                let offset = init_offset as i8; // 读取当前地址的值作为偏移量（有符号数）
+                operand_address = (address as i32 + 1 + (offset as i32)) as u16;
+                // 页面交叉判断
+                if check_page_boundary_crossed(address+1 ,operand_address){
+                    page_crossed = true;
+                }
             }
-        }
+        };
+        (operand_address,page_crossed)
     }
+
+   
 }
