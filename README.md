@@ -7,9 +7,10 @@
 
 语言采用rust，目标是实现一个完整的fc模拟器，包括cpu，ppu，apu，mapper等，最终能够运行fc游戏。
 
-# 运行demo文件
+# 测试文件说明
 
 nestest.nes是一个测试文件, 说明文档：http://www.qmtpro.com/~nes/misc/nestest.txt
+注：`0x4000 - 0x401F: APU 和 I/O 寄存器` 内部初始状态应设为0xFF
 
 
 # 进度
