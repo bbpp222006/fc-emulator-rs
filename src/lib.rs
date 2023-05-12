@@ -12,7 +12,7 @@ mod utils;
 pub use cpu::Cpu;
 pub use memory::{Memory,RomHeader};
 pub use emulator::Emulator;
-pub use utils::disassembler::Disassembler;
+// pub use utils::disassembler::Disassembler;
 
 // 我们还可以在这里定义一些库级别的公共函数或常量
 // 例如，我们可以定义一个用于处理库中的错误的统一错误类型

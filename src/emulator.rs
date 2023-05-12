@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::cpu::{Cpu};
 use crate::memory::Memory;
-use crate::Disassembler;
+// use crate::Disassembler;
 
 pub struct Emulator {
     pub cpu: Cpu,

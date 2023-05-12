@@ -32,18 +32,8 @@ pub enum AddressingMode {
 }
 
 impl AddressingMode {
-
-    pub fn operand_size(&self) -> u16 {
-        use AddressingMode::*;
-        match self {
-            Implied|Accumulator => 1,
-            Immediate|ZeroPage|ZeroPageX|ZeroPageY|IndirectX|IndirectY|Relative => 2,
-            Absolute|AbsoluteX|AbsoluteY|Indirect => 3,
-        }
-    }
-
     /// 返回(操作数的地址，页面是否交叉)
-    pub fn get_operand(
+    pub fn get_operand_address(
         &self,
         memory: &Memory,
         registers: &Registers,

@@ -86,6 +86,9 @@ impl Memory {
 
     // 向内存地址写入一个字节
     pub fn write(&mut self, addr: u16, data: u8) {
+        if addr==0x4015{
+            let a =1;
+        }
         match addr {
             // 0x0000 - 0x1FFF: RAM (2KB, 但前 0x800 字节镜像 3 次)
             0x0000..=0x1FFF => {
@@ -165,10 +168,10 @@ impl std::default::Default for Memory {
         // 使用一个空的 Vec<u8> 创建一个默认的 Mapper 实例
         let default_mapper: Box<dyn Mapper> = create_mapper(
             RomHeader::default(),
-            vec![],
-            vec![],
+            vec![0,0,0],
+            vec![0,0,0],
         );
-        Memory {ram: [0; 0x800],sram: [0; 8192], ppu_registers: [0; 0x8], apu_io_registers: [0; 0x20], mapper: default_mapper}
+        Memory {ram: [0; 0x800],sram: [0; 8192], ppu_registers: [0; 0x8], apu_io_registers: [0xFF; 0x20], mapper: default_mapper}
     }
 }
 

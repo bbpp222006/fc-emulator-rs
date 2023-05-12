@@ -3,7 +3,7 @@
 // src/cpu/disassembler.rs
 use std::fmt::Write;
 
-use crate::cpu::instructions::{Instruction, Opcode};
+use crate::cpu::instructions::{Instruction};
 use crate::cpu::addressing_modes::AddressingMode;
 
 use crate::memory::Memory;
@@ -49,7 +49,7 @@ impl<'a> Disassembler<'a>{
     /// 反汇编指定地址处的指令，返回反汇编结果
     pub fn disassemble_instruction(&self, address: u16) -> String {
         let opcode = self.cpu.memory.read(address);
-        let (instruction, addressing_mode) = Opcode::decode(opcode);
+        let (instruction, addressing_mode) = decode(opcode);
 
         // 开始的地址
         let mut output = format!("{:04X}  ", address); 
