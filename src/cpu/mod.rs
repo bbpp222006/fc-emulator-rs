@@ -10,7 +10,7 @@ pub mod registers;
 pub mod opcodes;
 
 // 重新导出子模块中的结构体和类型，以便在模拟器的其他部分中使用
-pub use cpu::Cpu;
+pub use cpu::{Cpu,start_cpu_thread};
 pub use instructions::Instruction;
 pub use addressing_modes::AddressingMode;
 pub use registers::Registers;

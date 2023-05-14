@@ -4,23 +4,30 @@
 use crate::cpu::instructions::Instruction;
 use crate::cpu::opcodes::decode_opcode;
 use crate::cpu::addressing_modes::AddressingMode;
-use crate::memory::Memory;
 use crate::cpu::registers::{Registers,StatusFlags};
+use crate::memory::{RWMessage,RWResult,RWType};
+use crate::utils::GlobalSignal;
 
-use std::fmt::Write;
+use std::{thread, vec};
+use crossbeam::channel::{bounded, select, Receiver, Sender};
 
 use super::instructions::InstructionInfo;
 
 
 /// 6502 CPU 的结构体
 pub struct Cpu {
-    pub registers: Registers, // CPU 寄存器
-    pub memory: Memory,     // 内存访问接口
-    pub interrupt: Interrupt, // 中断类型
-    pub ppu_scanline :u64, // PPU 扫描线
-    pub ppu_cycle:u64, // PPU 周期
-    pub cpu_cycle: u64, // CPU 周期
-    pub instruction_info: InstructionInfo, // 当前指令信息
+     registers: Registers, // CPU 寄存器
+     interrupt: Interrupt, // 中断类型
+     cpu_cycle: u64, // CPU 周期
+     instruction_info: InstructionInfo, // 当前指令信息
+     cpu_cycle_wait: u64,
+    pub channels: CpuChannels,
+}
+
+pub struct CpuChannels {
+    cpu2mem_in: Sender<RWMessage>,
+    mem2cpu_out: Receiver<RWResult>,
+    global_signal_out: Receiver<GlobalSignal>,
 }
 
 pub enum Interrupt {
@@ -30,31 +37,111 @@ pub enum Interrupt {
     Reset,
 }
 
-impl Cpu {
-    /// 创建一个新的 CPU 实例
-    pub fn new(memory: Memory) -> Self {
-        // 重置寄存器
-        let registers = Registers::new();
-        // 默认解析第一个操作码
-        let instruction_info = decode_opcode(memory.read(registers.pc));
-        Cpu {
-            registers,
-            memory,
-            interrupt: Interrupt::None,
-            ppu_scanline : 0,
-            ppu_cycle: 0,
-            cpu_cycle: 7,
-            instruction_info,
+pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>,pip_log_in:Sender<String>) {
+    let mut cpu = Cpu::new(cpu2mem_in,mem2cpu_out,global_signal_out);
+    thread::spawn(move || {
+        loop {
+            let global_signal_out = cpu.channels.global_signal_out.recv().unwrap();
+            match global_signal_out {
+                GlobalSignal::Clock => {
+                    // println!("接收到时钟信息");
+                    if cpu.cpu_cycle_wait == 0 {
+                        // println!("cpu开始执行指令");
+                        cpu.step();
+                        // println!("cpu开始执行完成");
+                    } else {
+                        // println!("cpu等待中，等待周期数：{}",cpu.cpu_cycle_wait);
+                        cpu.cpu_cycle_wait -= 1;
+                    }
+                },
+                GlobalSignal::Reset => {
+                    // println!("接收到复位信息，cpu开始执行复位");
+                    cpu.reset();
+                    // println!("cpu复位结束");
+                },
+                GlobalSignal::GetLog => {
+                    // println!("接收到获取日志信息，cpu开始执行获取日志");
+                    let log = cpu.get_current_log();
+                    pip_log_in.send(log).unwrap();
+                },
+                GlobalSignal::Step => {
+                    // println!("接收到cpu强制执行信息，cpu开始执行指令");
+                    cpu.step();
+                    // println!("cpu开始执行完成");
+ 
+                },
+            }
+            
         }
+    });
+}
+
+
+
+impl Cpu {
+    fn new(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>) -> Self {
+        Cpu {
+            registers: Registers::default(),
+            interrupt: Interrupt::None,
+            cpu_cycle: 7,
+            instruction_info: InstructionInfo::default(),
+            cpu_cycle_wait: 0,
+            channels: CpuChannels{
+                cpu2mem_in,
+                mem2cpu_out,
+                global_signal_out,
+            },
+        }
+    }
+
+    fn reset(&mut self) {
+        self.registers=Registers::default();
+        self.cpu_cycle=7;
+        self.instruction_info=InstructionInfo::default();
+        self.cpu_cycle_wait=0;
+    }
+
+    fn read(&self, address: u16) -> u8 {
+        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Read, address:address,value:None }).unwrap();
+        let read_result = self.channels.mem2cpu_out.recv().unwrap();
+        // if read_result.is_success{
+        //     println!("cpu从内存{:04X}读取数据{:02X}",address , read_result.data.unwrap());
+        // }else {
+        //     println!("cpu从内存读取数据失败");
+        // }
+        read_result.data.unwrap()
+    }
+
+    fn write(&mut self, address: u16, data: u8) {
+        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Write, address:address, value:Some(data) }).unwrap();
+        let write_result = self.channels.mem2cpu_out.recv().unwrap();
+        // if write_result.is_success{
+        //     println!("cpu向内存{:04X}写入数据{:02X}",address , data);
+        // }else {
+        //     println!("cpu向内存写入数据失败");
+        // }
+    }
+
+    fn read_u16(&self, address: u16) -> u16 {
+        let lo = self.read(address) as u16;
+        let hi = self.read(address + 1) as u16;
+        (hi << 8) | lo
+    }
+
+    fn read_u16_z(&self, address:u8 ) -> u16 {
+        let low_byte = self.read(address as u16) as u16;
+        let high_byte = self.read(address.wrapping_add(1) as u16) as u16;
+        (high_byte << 8) | low_byte
     }
 
 
     /// 执行一条指令
     pub fn step(&mut self) {
         // 解码操作码为指令和寻址模式
-        self.instruction_info = decode_opcode(self.memory.read(self.registers.pc));
-        self.execute();   
-
+        self.instruction_info = decode_opcode(self.read(self.registers.pc));
+        let current_cyc = self.cpu_cycle;
+        self.execute();  
+        self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
     }
 
         // 反汇编当前结果
@@ -67,17 +154,18 @@ impl Cpu {
             self.registers.y,
             self.registers.p,
             self.registers.sp,
-            self.ppu_scanline,
-            self.ppu_cycle,
+            0,
+            0,
             self.cpu_cycle,
         )
     }
+
 
     /// 反汇编指定地址处的指令，返回反汇编结果
     pub fn disassemble_instruction(&self, address: u16) -> String {
         use crate::cpu::instructions::Instruction::*;
 
-        let opcode = self.memory.read(address);
+        let opcode = self.read(address);
         let instruction_info = decode_opcode(opcode);
 
         // 开始的地址
@@ -86,9 +174,15 @@ impl Cpu {
 
         // opcode 和 根据寻址模式的接下来几位内存
         output.push_str(&format!("{:02X} ", opcode));
+        let mut tmp=vec![];
         for i in 1..=operand_size-1 {
-            output.push_str(&format!("{:02X} ", self.memory.read(address + i as u16)));
+            let code = self.read(address + i as u16);
+            tmp.push(code);
+            output.push_str(&format!("{:02X} ", code));
         }
+        //将tmp向量合并成u16
+        let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
+
         output = format!("{: <15}", output);
 
         // 如果opcode是拓展指令，则在前面加*
@@ -120,22 +214,22 @@ impl Cpu {
                 match instruction_info.addressing_mode {
                     AddressingMode::Implied => (),
                     AddressingMode::Absolute => {
-                        let operand = self.memory.read_u16(address + 1);
+                        let operand = tmp;
                         output.push_str(&format!("${:04X}", operand));
                     }
                     AddressingMode::Indirect => {
-                        let operand_address_address = self.memory.read_u16(address+1) as u16;
-                        let low_byte = self.memory.read(operand_address_address);
+                        let operand_address_address = tmp;
+                        let low_byte = self.read(operand_address_address);
                         let high_byte = if operand_address_address & 0x00FF == 0x00FF {
-                            self.memory.read(operand_address_address & 0xFF00)
+                            self.read(operand_address_address & 0xFF00)
                         } else {
-                            self.memory.read(operand_address_address + 1)
+                            self.read(operand_address_address + 1)
                         };
                         let operand_address = (high_byte as u16) << 8 | low_byte as u16;
                         output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
                     }
                     AddressingMode::Relative => {
-                        let init_offset = self.memory.read(address+1);
+                        let init_offset = tmp as u8;
                         let offset = init_offset as i8; // 读取当前地址的值作为偏移量（有符号数）
                         let operand_address = ((address+1) as i32 + 1 + (offset as i32)) as u16;
                         output.push_str(&format!("${:04X}", operand_address));
@@ -149,58 +243,57 @@ impl Cpu {
                     AddressingMode::Implied => (),
                     AddressingMode::Accumulator => output.push_str("A"),
                     AddressingMode::Immediate => {
-                        let operand = self.memory.read(address+1);
+                        let operand = tmp;
                         output.push_str(&format!("#${:02X}", operand));
                     }
                     AddressingMode::ZeroPage => {
-                        let operand_address = self.memory.read(address+1) as u16;
-                        output.push_str(&format!("${:02X} = {:02X}", operand_address, self.memory.read(operand_address)));
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X} = {:02X}", operand_address, self.read(operand_address)));
                     }
                     AddressingMode::ZeroPageX => {
-                        let operand_address = self.memory.read(address+1) as u16;
-                        output.push_str(&format!("${:02X},X @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.x as u16) & 0xFF, self.memory.read((operand_address + self.registers.x as u16) & 0xFF)));
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X},X @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.x as u16) & 0xFF, self.read((operand_address + self.registers.x as u16) & 0xFF)));
                     }
                     AddressingMode::ZeroPageY => {
-                        let operand_address = self.memory.read(address+1) as u16;
-                        output.push_str(&format!("${:02X},Y @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.y as u16) & 0xFF, self.memory.read((operand_address + self.registers.y as u16) & 0xFF)));
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X},Y @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.y as u16) & 0xFF, self.read((operand_address + self.registers.y as u16) & 0xFF)));
                     }
                     AddressingMode::Absolute => {
-                        let operand = self.memory.read_u16(address+1);
-                        output.push_str(&format!("${:04X} = {:02X}", operand, self.memory.read(operand)));
+                        let operand = tmp;
+                        output.push_str(&format!("${:04X} = {:02X}", operand, self.read(operand)));
                     }
                     AddressingMode::AbsoluteX => {
-                        let operand = self.memory.read_u16(address+1);
-                        output.push_str(&format!("${:04X},X @ {:04X} = {:02X}", operand, operand + self.registers.x as u16, self.memory.read(operand + self.registers.x as u16)));
+                        let operand = tmp;
+                        output.push_str(&format!("${:04X},X @ {:04X} = {:02X}", operand, operand + self.registers.x as u16, self.read(operand + self.registers.x as u16)));
                     }
                     AddressingMode::AbsoluteY => {
-                        let base_address = self.memory.read_u16(address+1);
+                        let base_address = tmp;
                         let operand_address = base_address.wrapping_add(self.registers.y as u16);
-                        let operand = self.memory.read(operand_address);
+                        let operand = self.read(operand_address);
                         output.push_str(&format!("${:04X},Y @ {:04X} = {:02X}", base_address, operand_address, operand));
                     }
                     AddressingMode::Indirect => {
-                        let operand_address_address = self.memory.read_u16(address+1) as u16;
-                        let low_byte = self.memory.read(operand_address_address);
+                        let operand_address_address = tmp as u16;
+                        let low_byte = self.read(operand_address_address);
                         let high_byte = if operand_address_address & 0x00FF == 0x00FF {
-                            self.memory.read(operand_address_address & 0xFF00)
+                            self.read(operand_address_address & 0xFF00)
                         } else {
-                            self.memory.read(operand_address_address + 1)
+                            self.read(operand_address_address + 1)
                         };
                         let operand_address = (high_byte as u16) << 8 | low_byte as u16;
-                        let operand = self.memory.read(operand_address);
                         output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
                     }
                     AddressingMode::IndirectX => {
-                        let base_address = self.memory.read(address+1);
-                        let operand_address = self.memory.read_u16_z(base_address.wrapping_add(self.registers.x));
-                        let operand = self.memory.read(operand_address);
+                        let base_address = tmp as u8;
+                        let operand_address = self.read_u16_z(base_address.wrapping_add(self.registers.x));
+                        let operand = self.read(operand_address);
                         output.push_str(&format!("(${:02X},X) @ {:02X} = {:04X} = {:02X}", base_address, (base_address as u16 + self.registers.x as u16) & 0xFF, operand_address, operand));
                     }
                     AddressingMode::IndirectY => {
-                        let base_address_address = self.memory.read(address+1);
-                        let base_address = self.memory.read_u16_z(base_address_address);
+                        let base_address_address = tmp as u8;
+                        let base_address = self.read_u16_z(base_address_address);
                         let operand_address = base_address.wrapping_add(self.registers.y as u16) ;
-                        let operand = self.memory.read(operand_address);
+                        let operand = self.read(operand_address);
                         output.push_str(&format!("(${:02X}),Y = {:04X} @ {:04X} = {:02X}", base_address_address, base_address, operand_address, operand));
                     }
                     _ => panic!("当前指令:{:?} 不存在寻址模式{:?}", instruction_info.instruction, instruction_info.addressing_mode),
@@ -210,6 +303,84 @@ impl Cpu {
         output 
     }
 
+
+    pub fn get_operand_address(&self)-> (u16,bool) {
+        fn check_page_boundary_crossed(addr1: u16, addr2: u16) -> bool {
+            (addr1 & 0xFF00) != (addr2 & 0xFF00)
+        }
+        let address = self.registers.pc+1;
+        let mut operand_address = 0;
+        let mut page_crossed = false;
+        match self.instruction_info.addressing_mode {
+            AddressingMode::Implied|AddressingMode::Accumulator => (),
+            AddressingMode::Immediate => {
+                operand_address = address;
+            }
+            AddressingMode::Absolute => {
+                operand_address = self.read_u16(address);
+            }
+            AddressingMode::AbsoluteX => {
+                let base_address = self.read_u16(address);
+                operand_address = base_address + self.registers.x as u16;
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
+            }
+            AddressingMode::AbsoluteY => {
+                let base_address = self.read_u16(address);
+                operand_address = base_address.wrapping_add(self.registers.y as u16);
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
+            }
+            AddressingMode::ZeroPage => {
+                operand_address = self.read(address) as u16;
+            }
+            AddressingMode::ZeroPageX => {
+                let base_address = self.read(address) as u16;
+                operand_address = (base_address + self.registers.x as u16)& 0x00FF;
+            }
+            AddressingMode::ZeroPageY => {
+                let base_address = self.read(address) as u16;
+                operand_address = (base_address + self.registers.y as u16)& 0x00FF;
+            }
+            AddressingMode::Indirect => {
+                let operand_address_address = self.read_u16(address);
+                let low_byte = self.read(operand_address_address);
+                let high_byte = if operand_address_address & 0x00FF == 0x00FF {
+                    self.read(operand_address_address & 0xFF00)
+                } else {
+                    self.read(operand_address_address + 1)
+                };
+                operand_address = (high_byte as u16) << 8 | low_byte as u16;
+            }
+            AddressingMode::IndirectX => {
+                let base_address = self.read(address);
+                operand_address = self.read_u16_z(base_address.wrapping_add(self.registers.x));
+            }
+            AddressingMode::IndirectY => {
+                let base_address_address = self.read(address);
+                let base_address = self.read_u16_z(base_address_address);
+                operand_address = base_address.wrapping_add(self.registers.y as u16) ;
+                // 页面交叉判断
+                if check_page_boundary_crossed(base_address ,operand_address){
+                    page_crossed = true;
+                }
+            }
+            AddressingMode::Relative => {
+                let init_offset = self.read(address);
+                let offset = init_offset as i8; // 读取当前地址的值作为偏移量（有符号数）
+                operand_address = (address as i32 + 1 + (offset as i32)) as u16;
+                // 页面交叉判断
+                if check_page_boundary_crossed(address+1 ,operand_address){
+                    page_crossed = true;
+                }
+            }
+        };
+        (operand_address,page_crossed)
+    }
 
     /// 执行指令
     fn execute(&mut self) {
@@ -293,7 +464,7 @@ impl Cpu {
         let stack_address = 0x0100 + self.registers.sp as u16;
     
         // 将值写入当前堆栈位置
-        self.memory.write(stack_address, value);
+        self.write(stack_address, value);
     
         // 更新堆栈指针（SP），将其减 1，指向下一个可用位置
         self.registers.sp = self.registers.sp.wrapping_sub(1);
@@ -311,7 +482,7 @@ impl Cpu {
         let stack_address = STACK_BASE + self.registers.sp as u16;
     
         // 从内存中读取位于 stack_address 的值
-        let value = self.memory.read(stack_address);
+        let value = self.read(stack_address);
     
         // 返回弹出的值
         value
@@ -341,9 +512,9 @@ impl Cpu {
     }
 
     fn cmp(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 从内存中读取操作数
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 将操作数与寄存器 A 进行比较
         let result = self.registers.a.wrapping_sub(operand);
@@ -367,9 +538,9 @@ impl Cpu {
     }
 
     fn and(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 从内存中读取操作数
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 将操作数与寄存器 A 进行 AND 运算
         self.registers.a &= operand;
@@ -451,7 +622,7 @@ impl Cpu {
     }
 
     fn bpl(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         if !self.registers.get_flag(StatusFlags::Negative) {
             self.cpu_cycle += 1;
@@ -465,7 +636,7 @@ impl Cpu {
     }
 
     fn bvc(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         if !self.registers.get_flag(StatusFlags::Overflow) {
             self.cpu_cycle += 1;
@@ -479,7 +650,7 @@ impl Cpu {
     }
 
     fn bvs(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         if self.registers.get_flag(StatusFlags::Overflow) {
             self.cpu_cycle += 1;
             self.registers.pc = operand_address;
@@ -493,8 +664,8 @@ impl Cpu {
     }
 
     fn bit(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         let value = self.registers.a & operand;
         self.registers.set_flag(StatusFlags::Zero, value==0);
         self.registers.set_flag(StatusFlags::Overflow, operand & 0x40 != 0);
@@ -504,15 +675,15 @@ impl Cpu {
     }
 
     fn sta(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         let value = self.registers.a;
-        self.memory.write(operand_address, value);
+        self.write(operand_address, value);
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
     }
     
     fn bne(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         if !self.registers.get_flag(StatusFlags::Zero) {
             self.registers.pc = operand_address;
             self.cpu_cycle += 1;
@@ -527,7 +698,7 @@ impl Cpu {
 
     // BEQ 指令实现
     fn beq(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         if self.registers.get_flag(StatusFlags::Zero) {
             self.registers.pc = operand_address;
             self.cpu_cycle += 1;
@@ -542,8 +713,8 @@ impl Cpu {
 
     // LDA 指令实现
     fn lda(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         self.check_zsflag(operand);
         self.registers.a = operand;
         self.registers.pc += self.instruction_info.operand_size as u16;
@@ -555,7 +726,7 @@ impl Cpu {
 
     // BCC 指令实现
     fn bcc(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 如果进位标志（Carry）为 0，则跳转到指定地址
             if !self.registers.get_flag(StatusFlags::Carry) {
                 self.registers.pc = operand_address;
@@ -579,7 +750,7 @@ impl Cpu {
 
     // BCS 指令实现
     fn bcs(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 如果进位标志（Carry）为 1，则跳转到指定地址
             if self.registers.get_flag(StatusFlags::Carry) {
                 self.registers.pc = operand_address;
@@ -603,7 +774,7 @@ impl Cpu {
 
     /// NOP
     fn nop(&mut self) {
-        let (_,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (_,page_crossed) = self.get_operand_address();
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         if page_crossed {
@@ -614,7 +785,7 @@ impl Cpu {
 
     /// JSR 指令实现
     fn jsr(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         // JSR 操作的目标地址是绝对地址
         let target_address = operand_address;
@@ -639,20 +810,20 @@ impl Cpu {
 
     /// STX 指令实现
     fn stx(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        self.memory.write(operand_address, self.registers.x);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        self.write(operand_address, self.registers.x);
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         self.registers.pc += self.instruction_info.operand_size as u16;
     }
 
     /// LDX 指令实现
     fn ldx(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         
         self.cpu_cycle += self.instruction_info.instruction_cycle as u64;
         self.registers.pc+=self.instruction_info.operand_size as u16;
 
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
         self.registers.x = operand;
         self.check_zsflag(operand);
         if page_crossed{
@@ -663,7 +834,7 @@ impl Cpu {
 
     /// JMP 指令实现
     fn jmp(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         self.registers.pc = operand_address;
         self.cpu_cycle += self.instruction_info.instruction_cycle as u64;
     }
@@ -683,7 +854,7 @@ impl Cpu {
     }
 
     fn bmi(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         if self.registers.get_flag(StatusFlags::Negative) {
             self.registers.pc = operand_address;
             self.cpu_cycle += 1;   
@@ -697,8 +868,8 @@ impl Cpu {
     }
 
     fn ora (&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         self.registers.a |= operand;
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.check_zsflag(self.registers.a);
@@ -715,8 +886,8 @@ impl Cpu {
     }
 
     fn eor(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         self.registers.a ^= operand;
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.check_zsflag(self.registers.a);
@@ -727,9 +898,9 @@ impl Cpu {
     }
 
     fn adc(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 根据寻址模式获取操作数值
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 获取累加器的当前值
         let a = self.registers.a;
@@ -760,9 +931,9 @@ impl Cpu {
     }
     
     fn ldy(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 根据寻址模式获取操作数值
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 将操作数存入 Y 寄存器
         self.registers.y = operand;
@@ -778,9 +949,9 @@ impl Cpu {
     }
 
     fn cpy(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 根据寻址模式获取操作数值
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 获取 Y 寄存器的当前值
         let y = self.registers.y;
@@ -797,9 +968,9 @@ impl Cpu {
     }
 
     fn cpx(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         // 根据寻址模式获取操作数值
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 获取 X 寄存器的当前值
         let x = self.registers.x;
@@ -817,9 +988,9 @@ impl Cpu {
     }
 
     fn sbc(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         let acc = self.registers.a;
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
 
         // 获取借位标志
         let borrow = if self.registers.get_flag(StatusFlags::Carry) { 0 } else { 1 };
@@ -980,7 +1151,7 @@ impl Cpu {
     }
 
     fn lsr(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         match self.instruction_info.addressing_mode {
@@ -992,18 +1163,18 @@ impl Cpu {
                 self.registers.a = value;
             }
             AddressingMode::ZeroPage|AddressingMode::ZeroPageX|AddressingMode::Absolute|AddressingMode::AbsoluteX =>{
-                let mut value = self.memory.read(operand_address);
+                let mut value = self.read(operand_address);
                 self.registers.set_flag(StatusFlags::Carry, value & 0x01 == 0x01);
                 value >>= 1;
                 self.check_zsflag(value);
-                self.memory.write(operand_address, value);
+                self.write(operand_address, value);
             }
             _=>panic!("当前指令:{:?} 不存在寻址模式{:?}", Instruction::LSR, self.instruction_info.addressing_mode),
         }
     }
 
     fn asl (&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
         match self.instruction_info.addressing_mode {
@@ -1015,21 +1186,21 @@ impl Cpu {
                 self.registers.a = value;
             }
             AddressingMode::ZeroPage|AddressingMode::ZeroPageX|AddressingMode::Absolute|AddressingMode::AbsoluteX =>{
-                let mut value = self.memory.read(operand_address);
+                let mut value = self.read(operand_address);
                 self.registers.set_flag(StatusFlags::Carry, value & 0x80 == 0x80);
                 value <<= 1;
                 self.check_zsflag(value);
-                self.memory.write(operand_address, value);
+                self.write(operand_address, value);
             }
             _=>panic!("当前指令:{:?} 不存在寻址模式{:?}", Instruction::ASL, self.instruction_info.addressing_mode),
         }
     }
 
     fn ror(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         let operand = match self.instruction_info.addressing_mode {
             AddressingMode::Accumulator => self.registers.a,
-            _ => self.memory.read(operand_address),
+            _ => self.read(operand_address),
         };
     
         // 将操作数最低位旋转到C标志位
@@ -1040,7 +1211,7 @@ impl Cpu {
     
         match self.instruction_info.addressing_mode {
             AddressingMode::Accumulator => self.registers.a = result,
-            _ => self.memory.write(operand_address, result),
+            _ => self.write(operand_address, result),
         };
     
         // 更新 C 和 Z 标志位
@@ -1053,10 +1224,10 @@ impl Cpu {
     }
 
     fn rol(&mut self) {
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
         let operand = match self.instruction_info.addressing_mode {
             AddressingMode::Accumulator => self.registers.a,
-            _ => self.memory.read(operand_address),
+            _ => self.read(operand_address),
         };
     
         // 将操作数最高位旋转到C标志位
@@ -1067,7 +1238,7 @@ impl Cpu {
     
         match self.instruction_info.addressing_mode {
             AddressingMode::Accumulator => self.registers.a = result,
-            _ => self.memory.write(operand_address, result),
+            _ => self.write(operand_address, result),
         };
     
         // 更新 C 和 Z 标志位
@@ -1080,35 +1251,35 @@ impl Cpu {
     }
     
     fn sty(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        self.memory.write(operand_address, self.registers.y);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        self.write(operand_address, self.registers.y);
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
     }
 
     fn inc(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         let result = operand.wrapping_add(1);
         self.check_zsflag(result);
-        self.memory.write(operand_address, result);
+        self.write(operand_address, result);
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
     }
 
     fn dec(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         let result = operand.wrapping_sub(1);
         self.check_zsflag(result);
-        self.memory.write(operand_address, result);
+        self.write(operand_address, result);
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
     }
 
     fn lax(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
         self.check_zsflag(operand);
         self.registers.a = operand;
         self.registers.x = operand;
@@ -1121,21 +1292,21 @@ impl Cpu {
     }
 
     fn sax(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         let value = self.registers.x & self.registers.a;
-        self.memory.write(operand_address, value);
+        self.write(operand_address, value);
 
         self.registers.pc += self.instruction_info.operand_size as u16;
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
     }
 
     fn dcp(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
 
         let value = operand.wrapping_sub(1);
-        self.memory.write(operand_address,value);
+        self.write(operand_address,value);
 
         let result16 = (self.registers.a as u16).wrapping_sub(value as u16);
         self.registers.set_flag(StatusFlags::Carry, result16<0x100);
@@ -1147,13 +1318,13 @@ impl Cpu {
     }
 
     fn isc(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
-        let operand = self.memory.read(operand_address);
+        let (operand_address,page_crossed) = self.get_operand_address();
+        let operand = self.read(operand_address);
 
 
         // INC
         let result = operand.wrapping_add(1);
-        self.memory.write(operand_address, result);
+        self.write(operand_address, result);
 
 
         // SBC
@@ -1178,13 +1349,13 @@ impl Cpu {
     }
 
     fn slo(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         // ASL
-        let mut value = self.memory.read(operand_address);
+        let mut value = self.read(operand_address);
         self.registers.set_flag(StatusFlags::Carry, value & 0x80 == 0x80);
         value <<= 1;
-        self.memory.write(operand_address, value);
+        self.write(operand_address, value);
 
         self.registers.a|=value;
         self.check_zsflag(self.registers.a);
@@ -1194,10 +1365,10 @@ impl Cpu {
     }
 
     fn rla(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         // rol
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 将操作数最高位旋转到C标志位
         let carry = operand & 0x80;
@@ -1205,7 +1376,7 @@ impl Cpu {
         // 向左旋转操作数
         let result = (operand << 1) | (self.registers.get_flag(StatusFlags::Carry) as u8);
     
-        self.memory.write(operand_address, result);
+        self.write(operand_address, result);
     
         // 更新 C 和 Z 标志位
         self.registers.set_flag(StatusFlags::Carry, carry != 0);
@@ -1220,13 +1391,13 @@ impl Cpu {
     }
 
     fn sre(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         // LSR
-        let mut value = self.memory.read(operand_address);
+        let mut value = self.read(operand_address);
         self.registers.set_flag(StatusFlags::Carry, value & 0x01 == 0x01);
         value >>= 1;
-        self.memory.write(operand_address, value);
+        self.write(operand_address, value);
 
         // EOR
         self.registers.a^=value;
@@ -1237,10 +1408,10 @@ impl Cpu {
     }
 
     fn rra(&mut self){
-        let (operand_address,page_crossed) = self.instruction_info.addressing_mode.get_operand_address(&self.memory, &self.registers, self.registers.pc + 1);
+        let (operand_address,page_crossed) = self.get_operand_address();
 
         // ROR
-        let operand = self.memory.read(operand_address);
+        let operand = self.read(operand_address);
     
         // 将操作数最低位旋转到C标志位
         let carry = operand & 1;
@@ -1248,7 +1419,7 @@ impl Cpu {
         // 向右旋转操作数
         let result = (operand >> 1) | (self.registers.get_flag(StatusFlags::Carry) as u8) << 7;
     
-        self.memory.write(operand_address, result);
+        self.write(operand_address, result);
     
         // 更新 C  标志位
         self.registers.set_flag(StatusFlags::Carry, carry != 0);

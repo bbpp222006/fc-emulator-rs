@@ -5,7 +5,7 @@ use std::fmt;
 use crate::memory::RomHeader;
 
 // 定义一个通用的 Mapper trait
-pub trait Mapper: fmt::Debug {
+pub trait Mapper: Send {
     fn read_prg_rom(&self, addr: u16) -> u8;
     fn write_prg_rom(&mut self, addr: u16, data: u8);
     fn read_chr_rom(&self, addr: u16) -> u8;
@@ -64,6 +64,7 @@ impl Mapper for NromMapper {
         let addr = addr as usize % self.chr_rom.len();
         self.chr_rom[addr]
     }
+
 
     fn write_chr_rom(&mut self, _addr: u16, _data: u8) {
         // NROM 映射器的 CHR-ROM 通常不可写

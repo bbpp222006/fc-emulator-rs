@@ -1,6 +1,7 @@
 //包含一个枚举类型，用于表示所有可能的 6502 指令，以及与指令解码和执行相关的逻辑。例如，可以实现一个从操作码到指令的映射函数（from_opcode），以及一个执行指令的方法（execute）。
 
-use crate::cpu::{AddressingMode,Cpu};
+use crate::cpu::AddressingMode;
+use crate::cpu::opcodes::decode_opcode;
 
 #[derive(Debug)]
 pub enum InstructionType {
@@ -17,6 +18,12 @@ pub struct InstructionInfo {
     pub instruction_cycle: u8,
     pub instruction_type:InstructionType,
     pub unofficial:bool,
+}
+
+impl std::default::Default for InstructionInfo {
+    fn default() -> Self {
+        decode_opcode(0xEA) //默认是nop
+    }
 }
 
 /// 6502 CPU 的指令集枚举

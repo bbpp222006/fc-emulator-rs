@@ -23,9 +23,8 @@ pub enum StatusFlags {
     Negative = 1 << 7,
 }
 
-impl Registers {
-    /// 创建一个新的 Registers 实例
-    pub fn new() -> Self {
+impl std::default::Default for Registers {
+    fn default() -> Self {
         Registers {
             a: 0,
             x: 0,
@@ -35,7 +34,9 @@ impl Registers {
             p: 0x24,
         }
     }
+}
 
+impl Registers {
     /// 设置状态寄存器的某个标志位
     pub fn set_flag(&mut self, flag: StatusFlags, value: bool) {
         let flag = flag as u8;

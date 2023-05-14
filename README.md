@@ -19,6 +19,7 @@ nestest.nes是一个测试文件, 说明文档：http://www.qmtpro.com/~nes/misc
   - [x] cpu指令解析
   - [x] cpu基础、流程指令模拟
   - [x] cpu拓展指令模拟
+- [x] 多线程 
 - [ ] 屏幕渲染相关
 - [ ] 输入
 - [ ] TAS模拟

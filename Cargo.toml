@@ -6,4 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-regex = "1.5.4"
+regex = "1.8.1"
+wgpu = "0.16.0"
+winit = "0.28.5"
+pollster = "0.3.0"
+crossbeam = "0.8.2"
+env_logger = "0.10.0"

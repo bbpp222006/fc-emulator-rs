@@ -2,19 +2,38 @@
 
 pub mod mapper;
 
-use crate::memory::mapper::{Mapper,NromMapper,create_mapper};
+use crate::memory::mapper::{create_mapper, Mapper, NromMapper};
+
+use crossbeam::channel::{bounded, select, Receiver, Sender};
+use std::thread;
 
 pub const PRG_ROM_BANK_SIZE: usize = 0x4000;
 pub const CHR_ROM_BANK_SIZE: usize = 0x2000;
 
+pub struct RWMessage {
+    pub operate_type: RWType,
+    pub address: u16,
+    pub value: Option<u8>,
+}
+
+pub enum RWType {
+    Read,
+    Write,
+}
+
+pub struct RWResult {
+    pub data: Option<u8>,
+    pub is_success: bool,
+}
+
 pub struct RomHeader {
-    pub  prg_rom_size: usize,
-    pub  chr_rom_size: usize,
-    pub  mapper_number: u8,
-    pub  mirroring_type: u8,
-    pub  battery_backed_ram: bool,
-    pub  trainer: bool,
-    pub  nes2_0: bool,
+    pub prg_rom_size: usize,
+    pub chr_rom_size: usize,
+    pub mapper_number: u8,
+    pub mirroring_type: u8,
+    pub battery_backed_ram: bool,
+    pub trainer: bool,
+    pub nes2_0: bool,
 }
 
 impl Default for RomHeader {
@@ -37,20 +56,86 @@ pub struct InterruptVectors {
     pub irq_vector: u16,
 }
 
+impl std::default::Default for InterruptVectors {
+    fn default() -> Self {
+        InterruptVectors {
+            nmi_vector: 0,
+            reset_vector: 0,
+            irq_vector: 0,
+        }
+    }
+}
+
 pub struct Memory {
-   pub  ram: [u8; 0x800], // 2KB RAM
-    sram: [u8; 8192], // 8KB 存档 SRAM
-    ppu_registers: [u8; 0x8], // PPU 寄存器
+    ram: [u8; 0x800],             // 2KB RAM
+    sram: [u8; 8192],             // 8KB 存档 SRAM
+    ppu_registers: [u8; 0x8],     // PPU 寄存器
     apu_io_registers: [u8; 0x20], // APU 和 I/O 寄存器
-    mapper: Box<dyn Mapper>, // mapper 对象，处理卡带相关的内存映射和访问
+    mapper: Box<dyn Mapper>,      // mapper 对象，处理卡带相关的内存映射和访问
+    interrupt_vectors: InterruptVectors,
+   pub channels: MemChannels,
+}
+
+pub struct MemChannels {
+    bus2mem_out: Receiver<RWMessage>,
+    mem2bus_in: Sender<RWResult>,
+    rom2mem_out: Receiver<Vec<u8>>,
+}
+
+
+pub fn start_mem_thread(bus2mem_out:Receiver<RWMessage>,mem2bus_in:Sender<RWResult>,rom2mem_out:Receiver<Vec<u8>>) {
+    let mut memory = Memory::new(bus2mem_out,mem2bus_in,rom2mem_out);
+    let mut is_success = false;
+    let mut data = None;
+    thread::spawn(move || {
+        loop{
+            select! {
+                recv(memory.channels.rom2mem_out) -> msg => {
+                    let rom = msg.expect("接收rom时发生错误");
+                    println!("开始加载rom");
+                    memory.reset();
+                    memory.load_rom(rom);
+                }
+                recv(memory.channels.bus2mem_out) -> msg =>{
+                    let msg = msg.expect("接收读写管道时发生错误");
+                    match msg.operate_type {
+                        RWType::Read => {
+                            data = Some(memory.read(msg.address));
+                            is_success = true;
+                        }
+                        RWType::Write => {
+                            memory.write(msg.address, msg.value.expect("写信息中未能找到具体数值"));
+                            is_success = true;
+                        }
+                    }
+                    memory.channels
+                        .mem2bus_in
+                        .send(RWResult { data, is_success}).expect("发送读写信息时发生错误");
+                }
+            }
+        }
+    });
 }
 
 impl Memory {
-    // Memory 构造函数
-    pub fn new(mapper: Box<dyn Mapper>) -> Self {
-        Memory { ram: [0; 0x800],sram: [0; 8192], ppu_registers: [0; 0x8], apu_io_registers: [0; 0x20], mapper }
-    }
+    pub fn new(bus2mem_out:Receiver<RWMessage>,mem2bus_in:Sender<RWResult>,rom2mem_out:Receiver<Vec<u8>>) -> Self {
+        let default_mapper: Box<dyn Mapper> =
+        create_mapper(RomHeader::default(), vec![0; 3], vec![0; 3]);
+        Memory {
+            ram: [0; 0x800],
+            sram: [0; 8192],
+            ppu_registers: [0; 0x8],
+            apu_io_registers: [0xFF; 0x20],
+            mapper: default_mapper,
+            interrupt_vectors: InterruptVectors::default(),
+            channels: MemChannels {
+                mem2bus_in,
+                bus2mem_out,
+                rom2mem_out,
+            },
+        }
 
+    }
     // 从内存地址读取一个字节
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
@@ -79,24 +164,19 @@ impl Memory {
             0x8000..=0xFFFF => {
                 //高三位为5:  PRG-ROM
                 self.mapper.read_prg_rom(addr)
-            }   
+            }
             _ => 0, // 不可能的地址范围
         }
     }
 
     // 向内存地址写入一个字节
     pub fn write(&mut self, addr: u16, data: u8) {
-        if addr==0x4015{
-            let a =1;
-        }
         match addr {
             // 0x0000 - 0x1FFF: RAM (2KB, 但前 0x800 字节镜像 3 次)
             0x0000..=0x1FFF => {
                 let ram_addr = addr & 0x07FF;
 
                 self.ram[ram_addr as usize] = data;
-
-                
             }
             // 0x2000 - 0x3FFF: PPU 寄存器 (8 字节镜像，每 0x8 个地址有一个寄存器)
             0x2000..=0x3FFF => {
@@ -124,30 +204,6 @@ impl Memory {
         }
     }
 
-    // 从内存地址读取一个 16 位字
-    pub fn read_u16(&self, address: u16) -> u16 {
-        let low_byte = self.read(address) as u16;
-        let high_byte = self.read(address + 1) as u16;
-        (high_byte << 8) | low_byte
-    }
-
-    // 从内存地址读取一个 16 位字，零页专用
-    pub fn read_u16_z(&self, address:u8 ) -> u16 {
-        let low_byte = self.read(address as u16) as u16;
-        let high_byte = self.read(address.wrapping_add(1) as u16) as u16;
-        (high_byte << 8) | low_byte
-    }
-
-
-     // 用于单元测试的 from_data 方法
-     pub fn from_data(data: Vec<u8>) -> Self {
-        // 创建一个简单的 NROM Mapper 实例
-        let mapper = Box::new(NromMapper::new(data, vec![], 0));
-
-        // 使用 NROM Mapper 实例创建一个 Memory 实例
-        Memory { ram: [0; 0x800],sram: [0; 8192], ppu_registers: [0; 0x8], apu_io_registers: [0; 0x20], mapper }
-    }
-
     pub fn load_rom(&mut self, rom_data: Vec<u8>) {
         // 解析ROM文件头
         let rom_header = parse_rom_header(&rom_data);
@@ -155,23 +211,27 @@ impl Memory {
         // 提取PRG-ROM和CHR-ROM数据
         let (prg_rom, chr_rom) = parse_prg_and_chr_rom_data(&rom_data);
 
+        // 提取中断信息
+        self.interrupt_vectors = parse_interrupt_vectors(&prg_rom);
+
         // 根据ROM文件头信息创建一个适当的映射器（Mapper）实例
         let mapper = create_mapper(rom_header, prg_rom, chr_rom);
 
         // 将创建的映射器实例存储在 Memory 结构体中
         self.mapper = mapper;
     }
-}
 
-impl std::default::Default for Memory {
-    fn default() -> Self {
-        // 使用一个空的 Vec<u8> 创建一个默认的 Mapper 实例
-        let default_mapper: Box<dyn Mapper> = create_mapper(
-            RomHeader::default(),
-            vec![0,0,0],
-            vec![0,0,0],
-        );
-        Memory {ram: [0; 0x800],sram: [0; 8192], ppu_registers: [0; 0x8], apu_io_registers: [0xFF; 0x20], mapper: default_mapper}
+    pub fn reset(&mut self) {
+        // 重置 RAM
+        self.ram = [0; 0x800];
+        // 重置 SRAM
+        self.sram = [0; 8192];
+        // 重置 PPU 寄存器
+        self.ppu_registers = [0; 0x8];
+        // 重置 APU 和 I/O 寄存器
+        self.apu_io_registers = [0xFF; 0x20];
+        // 重置 Mapper
+        self.mapper.reset();
     }
 }
 
@@ -200,12 +260,12 @@ pub fn parse_rom_header(rom_data: &[u8]) -> RomHeader {
 pub fn parse_interrupt_vectors(prg_rom: &Vec<u8>) -> InterruptVectors {
     let nmi_vector = u16::from_le_bytes([prg_rom[prg_rom.len() - 6], prg_rom[prg_rom.len() - 5]]);
     let reset_vector = u16::from_le_bytes([prg_rom[prg_rom.len() - 4], prg_rom[prg_rom.len() - 3]]);
-    let irq_brk_vector = u16::from_le_bytes([prg_rom[prg_rom.len() - 2], prg_rom[prg_rom.len() - 1]]);
+    let irq_vector = u16::from_le_bytes([prg_rom[prg_rom.len() - 2], prg_rom[prg_rom.len() - 1]]);
 
     InterruptVectors {
         nmi_vector,
         reset_vector,
-        irq_vector: irq_brk_vector,
+        irq_vector,
     }
 }
 
