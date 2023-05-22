@@ -11,6 +11,7 @@ use crate::utils::Frame;
 use crate::ppu::ppu_impl::Ppu;
 
 use crate::utils::GlobalSignal;
+use crate::utils::window::MyApp;
 
 pub struct Emulator {
     pub pip_mem_out: (Sender<RWResult>, Receiver<RWResult>),
@@ -18,6 +19,7 @@ pub struct Emulator {
     pub pip_global_signal: (Sender<GlobalSignal>, Receiver<GlobalSignal>),
     pub pip_rom: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
     pub pip_log: (Sender<String>, Receiver<String>),
+    pub pip_ppu_frame: (Sender<Frame>, Receiver<Frame>),
     // pub window: Window,
 }
 
@@ -29,12 +31,14 @@ impl Emulator {
         let pip_global_signal = bounded(1);
         let pip_rom = bounded(1);
         let pip_log = bounded(1);
+        let pip_ppu_frame = bounded(1);
         Emulator {
             pip_mem_out,
             pip_mem_in,
             pip_global_signal,
             pip_rom,
             pip_log,
+            pip_ppu_frame,
         }
     }
 
@@ -51,6 +55,19 @@ impl Emulator {
             self.pip_global_signal.1.clone(),
             self.pip_log.0.clone(),
         );
+
+        
+        let options = eframe::NativeOptions {
+            initial_window_size: Some(egui::vec2(340.0, 261.0)),
+            ..Default::default()
+        };
+        let pip_ppu_frameout = self.pip_ppu_frame.1.clone();
+        eframe::run_native(
+            "Show an image with eframe/egui",
+            options,
+            Box::new(|cc| Box::new(MyApp::new(pip_ppu_frameout))),
+        )
+        .unwrap(); 
     }
 
     pub fn load_rom(&self, path: &str) {

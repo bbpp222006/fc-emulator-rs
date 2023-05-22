@@ -7,7 +7,7 @@ use crate::emulator::Emulator;
 
 
 
-pub async fn run_test() {
+pub fn run_test() {
     let rom_path = "rom/nestest.nes";
 
     let emulator =Emulator::new();
