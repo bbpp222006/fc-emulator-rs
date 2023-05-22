@@ -1,60 +1,48 @@
-use winit::{
-    event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
-    window::{Window as WinitWindow, WindowBuilder},
-};
+use eframe::egui;
+use egui_extras::image::RetainedImage;
+use crossbeam::channel::{bounded, select, Receiver, Sender};
+use egui::{ColorImage, Color32};
+use rand::Rng;
+use std::thread;
+use std::time::Duration;
 
-use crate::ppu::renderer::{Renderer,Frame};
 
-pub struct Window {
-    window: WinitWindow,
-    event_loop: Option<EventLoop<()>>,
-    renderer: Renderer,
-    close_requested: bool,
+pub struct MyApp {
+    image: RetainedImage,
+    pip_frame_data_out:Receiver<RetainedImage>,
 }
+ 
 
-impl Window {
-    pub async fn new() -> Self {
-        // 创建一个新的事件循环和窗口
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new().build(&event_loop).unwrap();
-
-        // 创建一个新的渲染器
-        let renderer = Renderer::new(&window).await;
-
+impl MyApp {
+    /// Called once before the first frame.
+    pub fn new(pip_frame_data_out:Receiver<RetainedImage>) -> Self {
         Self {
-            window,
-            event_loop: Some(event_loop),
-            renderer,
-            close_requested: false,
+            image: RetainedImage::from_image_bytes(
+                "rust-logo-256x256.png",
+                include_bytes!("rust-logo-256x256.png"),
+            )
+            .unwrap(),
+            pip_frame_data_out
         }
     }
-
-    pub fn present(&mut self, frame: &Frame) {
-        // 使用渲染器将帧绘制到屏幕上
-        self.renderer.render(frame);
-    }
-
-    pub fn check_close(&self) -> bool {
-        // 检查用户是否请求关闭窗口
-        self.close_requested
-    }
-    
-    pub fn run(mut self) {
-        // 运行窗口的事件循环
-        let event_loop = self.event_loop.take().unwrap();
-        event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Wait;
-
-            match event {
-                winit::event::Event::WindowEvent { event: winit::event::WindowEvent::CloseRequested, .. } => {
-                    self.close_requested = true;
-                }
-                winit::event::Event::WindowEvent { event: winit::event::WindowEvent::Resized(size), .. } => {
-                    self.renderer.resize(size);
-                }
-                _ => {}
-            }
-        });
-    }
 }
 
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        select! {
+            recv(self.pip_frame_data_out) -> new_frame =>{
+                self.image = new_frame.expect("接收新图像时发生错误");
+                println!("更改图像");
+            }
+            default =>(),
+        };
+        
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("This is an image:");
+            ui.add(
+                egui::Image::new(self.image.texture_id(ctx), ui.available_size())
+            );
+        });
+        ctx.request_repaint();
+    }
+}

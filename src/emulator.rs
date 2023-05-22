@@ -7,9 +7,9 @@ use crossbeam::channel::{bounded, select, Receiver, Sender};
 
 use crate::cpu::{start_cpu_thread, Cpu};
 use crate::memory::{start_mem_thread, Memory, RWMessage, RWResult};
-use crate::ppu::renderer::Frame;
+use crate::utils::Frame;
 use crate::ppu::ppu_impl::Ppu;
-use crate::utils::window::Window;
+
 use crate::utils::GlobalSignal;
 
 pub struct Emulator {

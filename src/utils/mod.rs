@@ -1,7 +1,7 @@
 pub mod window;
 // pub mod bus;
 
-pub use self::window::Window;
+// pub use self::window::Window;
 
 
 pub enum GlobalSignal{
@@ -10,3 +10,9 @@ pub enum GlobalSignal{
     Reset,
     Step,
 } 
+
+pub struct Frame {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
