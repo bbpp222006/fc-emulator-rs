@@ -38,7 +38,7 @@ impl Window {
         // 检查用户是否请求关闭窗口
         self.close_requested
     }
-
+    
     pub fn run(mut self) {
         // 运行窗口的事件循环
         let event_loop = self.event_loop.take().unwrap();
@@ -57,3 +57,4 @@ impl Window {
         });
     }
 }
+

@@ -95,7 +95,8 @@ impl Cpu {
     }
 
     fn reset(&mut self) {
-        self.registers=Registers::default();
+        self.registers.sp-=3;
+        self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
         self.cpu_cycle_wait=0;

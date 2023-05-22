@@ -31,7 +31,7 @@ impl std::default::Default for Registers {
             y: 0,
             pc: 0xC000,
             sp: 0xFD,
-            p: 0x24,
+            p: 0x34,
         }
     }
 }

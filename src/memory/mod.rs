@@ -125,7 +125,7 @@ impl Memory {
             ram: [0; 0x800],
             sram: [0; 8192],
             ppu_registers: [0; 0x8],
-            apu_io_registers: [0xFF; 0x20],
+            apu_io_registers: [0x00; 0x20],
             mapper: default_mapper,
             interrupt_vectors: InterruptVectors::default(),
             channels: MemChannels {

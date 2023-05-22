@@ -8,7 +8,7 @@ use crossbeam::channel::{bounded, select, Receiver, Sender};
 use crate::cpu::{start_cpu_thread, Cpu};
 use crate::memory::{start_mem_thread, Memory, RWMessage, RWResult};
 use crate::ppu::renderer::Frame;
-use crate::ppu::Ppu;
+use crate::ppu::ppu_impl::Ppu;
 use crate::utils::window::Window;
 use crate::utils::GlobalSignal;
 
@@ -82,7 +82,7 @@ impl Emulator {
         self.pip_log.1.clone().recv().unwrap()
     }
 
-    pub fn get_frame(&mut self) -> Frame {
+    pub fn get_frame(&self) -> Frame {
         todo!()
     }
 }
