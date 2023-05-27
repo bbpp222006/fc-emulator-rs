@@ -2,7 +2,7 @@
 
 // 引入标准库中的类型和特质
 use std::fmt;
-use crate::memory::RomHeader;
+use crate::mapper::RomHeader;
 
 // 定义一个通用的 Mapper trait
 pub trait Mapper: Send {

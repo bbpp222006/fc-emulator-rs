@@ -1,30 +1,15 @@
 // src/memory/mod.rs
 
-pub mod mapper;
+pub mod mapper000;
 
-use crate::memory::mapper::{create_mapper, Mapper, NromMapper};
-
+use crate::mapper::mapper000::{create_mapper, Mapper, NromMapper};
+use crate::bus::{RWMessage,RWResult,RWType};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use std::thread;
 
 pub const PRG_ROM_BANK_SIZE: usize = 0x4000;
 pub const CHR_ROM_BANK_SIZE: usize = 0x2000;
 
-pub struct RWMessage {
-    pub operate_type: RWType,
-    pub address: u16,
-    pub value: Option<u8>,
-}
-
-pub enum RWType {
-    Read,
-    Write,
-}
-
-pub struct RWResult {
-    pub data: Option<u8>,
-    pub is_success: bool,
-}
 
 pub struct RomHeader {
     pub prg_rom_size: usize,
@@ -134,7 +119,6 @@ impl Memory {
                 rom2mem_out,
             },
         }
-
     }
     // 从内存地址读取一个字节
     pub fn read(&self, addr: u16) -> u8 {

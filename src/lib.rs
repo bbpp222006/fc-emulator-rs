@@ -1,9 +1,11 @@
 // 引入我们的各个模块
 pub mod tests;
 mod cpu;
-mod memory;
+mod mapper;
 mod ppu;
 mod utils;
+mod window;
+mod bus;
 
 pub mod emulator;
 

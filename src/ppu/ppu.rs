@@ -208,6 +208,8 @@ impl Ppu {
         }
     }
 
+
+    
     pub fn reset(&mut self) {
         self.vram = [0; 0x8000];
         self.oam = [0; 0x100];

@@ -5,7 +5,7 @@ use crate::cpu::instructions::Instruction;
 use crate::cpu::opcodes::decode_opcode;
 use crate::cpu::addressing_modes::AddressingMode;
 use crate::cpu::registers::{Registers,StatusFlags};
-use crate::memory::{RWMessage,RWResult,RWType};
+use crate::bus::{RWMessage,RWResult,RWType};
 use crate::utils::GlobalSignal;
 
 use std::{thread, vec};

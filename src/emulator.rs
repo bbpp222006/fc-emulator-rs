@@ -6,12 +6,12 @@ use std::thread;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 
 use crate::cpu::{start_cpu_thread, Cpu};
-use crate::memory::{start_mem_thread, Memory, RWMessage, RWResult};
+use crate::mapper::{start_mem_thread, Memory, RWMessage, RWResult};
 use crate::utils::Frame;
-use crate::ppu::ppu_impl::Ppu;
+use crate::ppu::ppu::Ppu;
 
 use crate::utils::GlobalSignal;
-use crate::utils::window::MyApp;
+use crate::window::MyApp;
 
 pub struct Emulator {
     pub pip_mem_out: (Sender<RWResult>, Receiver<RWResult>),
