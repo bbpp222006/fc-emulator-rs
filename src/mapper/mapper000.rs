@@ -1,31 +1,8 @@
 // mapper.rs
 
 // 引入标准库中的类型和特质
-use std::fmt;
-use crate::mapper::RomHeader;
+use super::Mapper;
 
-// 定义一个通用的 Mapper trait
-pub trait Mapper: Send {
-    fn read_prg_rom(&self, addr: u16) -> u8;
-    fn write_prg_rom(&mut self, addr: u16, data: u8);
-    fn read_chr_rom(&self, addr: u16) -> u8;
-    fn write_chr_rom(&mut self, addr: u16, data: u8);
-    fn ppu_mirror_mode(&self) -> u8;
-    fn reset(&mut self);
-}
-
-
-pub fn create_mapper(
-    rom_header: RomHeader,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-) -> Box<dyn Mapper> {
-    match rom_header.mapper_number {
-        0 => Box::new(NromMapper::new(prg_rom, chr_rom, rom_header.mirroring_type)),
-        // 在这里添加其他 Mapper 的实现
-        _ => panic!("Unsupported mapper ID: {}", rom_header.mapper_number),
-    }
-}
 
 
 // 定义 NromMapper 结构体

@@ -41,7 +41,13 @@ impl eframe::App for MyApp {
             ui.heading("This is an image:");
             ui.add(egui::Image::new(
                 self.image.texture_id(ctx),
-                ui.available_size(),
+                {
+                    let min_x = 256.0;
+                    let min_y = 240.0;
+                    let (current_x,current_y) = (ui.available_size().x, ui.available_size().y);
+                    let scale = ((current_x/min_x).min(current_y/min_y)).max(1.0);
+                    egui::vec2(scale*min_x,scale*min_y)
+                },
             ));
         });
         ctx.request_repaint();

@@ -1,4 +1,4 @@
-struct Registers {
+pub struct Registers {
     // PPUCTRL 寄存器，用于控制 PPU 的一些行为。
     // 7 6 5 4 3 2 1 0
     // V P H B S I N N
@@ -59,7 +59,7 @@ struct Registers {
 }
 
 impl Registers {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             ppuctrl: 0,
             ppumask: 0,
@@ -73,8 +73,9 @@ impl Registers {
         }
     }
 
-    fn read(&mut self, addr: u16) -> u8 {
-        match addr {
+    pub fn read(&self, addr: u16) -> u8 {
+        let reg_addr = (addr & 0x0007) as usize; 
+        match reg_addr {
             0x2000 => self.ppuctrl,
             0x2001 => self.ppumask,
             0x2002 => self.ppustatus,
@@ -87,8 +88,9 @@ impl Registers {
         }
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
-        match addr {
+    pub fn write(&mut self, addr: u16, data: u8) {
+        let reg_addr = (addr & 0x0007) as usize; 
+        match reg_addr {
             0x2000 => self.ppuctrl = data,
             0x2001 => self.ppumask = data,
             0x2002 => self.ppustatus = data,
@@ -99,6 +101,18 @@ impl Registers {
             0x2007 => self.ppudata = data,
             _ => panic!("invalid ppu register addr: {:04X}", addr),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.ppuctrl = 0;
+        self.ppumask = 0;
+        self.ppustatus = 0;
+        // self.oamaddr = 0;
+        self.oamdata = 0;
+        self.ppuscroll = 0;
+        // self.ppuaddr = 0;
+        self.ppudata = 0;
+        self.oamdma = 0;
     }
 }
 

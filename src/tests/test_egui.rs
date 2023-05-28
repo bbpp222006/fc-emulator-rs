@@ -1,6 +1,6 @@
 
 use crate::utils::Frame;
-use crate::utils::window::MyApp;
+use crate::window::MyApp;
 use eframe::egui;
 use egui_extras::image::RetainedImage;
 use crossbeam::channel::{bounded, select, Receiver, Sender};

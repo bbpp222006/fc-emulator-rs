@@ -5,17 +5,20 @@ use std::thread;
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 
-use crate::cpu::{start_cpu_thread, Cpu};
-use crate::mapper::{start_mem_thread, Memory, RWMessage, RWResult};
+use crate::cpu::start_cpu_thread;
+use crate::bus::{RWMessage,RWResult,start_bus_thread};
 use crate::utils::Frame;
-use crate::ppu::ppu::Ppu;
 
 use crate::utils::GlobalSignal;
 use crate::window::MyApp;
 
 pub struct Emulator {
-    pub pip_mem_out: (Sender<RWResult>, Receiver<RWResult>),
-    pub pip_mem_in: (Sender<RWMessage>, Receiver<RWMessage>),
+    pub pip_cpu2bus:(Sender<RWMessage>, Receiver<RWMessage>),
+    pub pip_bus2cpu:  (Sender<RWResult>, Receiver<RWResult>),
+    pub pip_ppu2bus: (Sender<RWMessage>, Receiver<RWMessage>),
+    pub pip_bus2ppu: (Sender<RWResult>, Receiver<RWResult>),
+    pub pip_apu2bus: (Sender<RWMessage>, Receiver<RWMessage>),
+    pub pip_bus2apu: (Sender<RWResult>, Receiver<RWResult>),
     pub pip_global_signal: (Sender<GlobalSignal>, Receiver<GlobalSignal>),
     pub pip_rom: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
     pub pip_log: (Sender<String>, Receiver<String>),
@@ -26,15 +29,23 @@ pub struct Emulator {
 impl Emulator {
     pub fn new() -> Self {
         // 初始化通信管道
-        let pip_mem_out = bounded(1);
-        let pip_mem_in = bounded(1);
+        let pip_cpu2bus = bounded(1);
+        let pip_bus2cpu = bounded(1);
+        let pip_ppu2bus = bounded(1);
+        let pip_bus2ppu = bounded(1);
+        let pip_apu2bus = bounded(1);
+        let pip_bus2apu = bounded(1);
         let pip_global_signal = bounded(1);
         let pip_rom = bounded(1);
         let pip_log = bounded(1);
         let pip_ppu_frame = bounded(1);
         Emulator {
-            pip_mem_out,
-            pip_mem_in,
+            pip_cpu2bus,
+            pip_bus2cpu,
+            pip_ppu2bus,
+            pip_bus2ppu,
+            pip_apu2bus,
+            pip_bus2apu,
             pip_global_signal,
             pip_rom,
             pip_log,
@@ -42,16 +53,21 @@ impl Emulator {
         }
     }
 
+
     pub fn start(&self) {
         // 将通信队列连接起来
-        start_mem_thread(
-            self.pip_mem_in.1.clone(),
-            self.pip_mem_out.0.clone(),
+        start_bus_thread(
+            self.pip_bus2cpu.0.clone(),
+            self.pip_cpu2bus.1.clone(),
+            self.pip_bus2ppu.0.clone(),
+            self.pip_ppu2bus.1.clone(),
+            self.pip_bus2apu.0.clone(),
+            self.pip_apu2bus.1.clone(),
             self.pip_rom.1.clone(),
         );
         start_cpu_thread(
-            self.pip_mem_in.0.clone(),
-            self.pip_mem_out.1.clone(),
+            self.pip_cpu2bus.0.clone(),
+            self.pip_bus2cpu.1.clone(),
             self.pip_global_signal.1.clone(),
             self.pip_log.0.clone(),
         );

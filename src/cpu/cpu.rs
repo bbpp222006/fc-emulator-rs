@@ -27,7 +27,6 @@ pub struct Cpu {
 pub struct CpuChannels {
     cpu2mem_in: Sender<RWMessage>,
     mem2cpu_out: Receiver<RWResult>,
-    global_signal_out: Receiver<GlobalSignal>,
 }
 
 pub enum Interrupt {
@@ -38,10 +37,10 @@ pub enum Interrupt {
 }
 
 pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>,pip_log_in:Sender<String>) {
-    let mut cpu = Cpu::new(cpu2mem_in,mem2cpu_out,global_signal_out);
+    let mut cpu = Cpu::new(cpu2mem_in,mem2cpu_out);
     thread::spawn(move || {
         loop {
-            let global_signal_out = cpu.channels.global_signal_out.recv().unwrap();
+            let global_signal_out = global_signal_out.recv().unwrap();
             match global_signal_out {
                 GlobalSignal::Clock => {
                     // println!("接收到时钟信息");
@@ -79,7 +78,7 @@ pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResu
 
 
 impl Cpu {
-    fn new(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>) -> Self {
+    fn new(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>) -> Self {
         Cpu {
             registers: Registers::default(),
             interrupt: Interrupt::None,
@@ -89,13 +88,13 @@ impl Cpu {
             channels: CpuChannels{
                 cpu2mem_in,
                 mem2cpu_out,
-                global_signal_out,
             },
         }
     }
-
+    
+    //https://www.nesdev.org/wiki/CPU_power_up_state ,待优化    
     fn reset(&mut self) {
-        self.registers.sp-=3;
+        self.registers.sp = 0xFD; 
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();

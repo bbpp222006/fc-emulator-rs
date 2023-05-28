@@ -11,7 +11,7 @@ fn compare_logs(emulator_log: &str, expected_log: &str) -> bool {
     let re = Regex::new(r"(?P<cyc>CYC:\d+)").unwrap();
     let emulator_log_line = re.captures(emulator_log).unwrap();
     let expected_log_line = re.captures(expected_log).unwrap();
-    (emulator_log[..68] == expected_log[..68])&&(emulator_log_line["cyc"] == expected_log_line["cyc"])
+    (emulator_log[..74] == expected_log[..74])&&(emulator_log_line["cyc"] == expected_log_line["cyc"])
 }
 
 pub fn run_test() {

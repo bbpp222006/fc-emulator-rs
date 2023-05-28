@@ -24,4 +24,8 @@ impl CpuRam {
         let ram_addr = addr & 0x07FF;
         self.ram[ram_addr as usize]= data;
     }
+
+    pub fn reset(&mut self) {
+        self.ram = [0; 0x800];
+    }
 }

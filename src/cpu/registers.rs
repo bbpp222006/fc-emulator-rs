@@ -29,9 +29,9 @@ impl std::default::Default for Registers {
             a: 0,
             x: 0,
             y: 0,
-            pc: 0xC000,
-            sp: 0xFD,
-            p: 0x34,
+            pc: 0xC000, // debug
+            sp: 0xFD, // debug
+            p: 0x24,
         }
     }
 }
