@@ -29,6 +29,7 @@ pub fn run_test() {
         ..Default::default()
     };
     let pip_frame_data: (Sender<Frame>, Receiver<Frame>) = bounded(1);
+    let pip_input_stream = bounded(1);
 
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs_f32(1.0/30.0));
@@ -40,7 +41,7 @@ pub fn run_test() {
     eframe::run_native(
         "Show an image with eframe/egui",
         options,
-        Box::new(|cc| Box::new(MyApp::new(pip_frame_data.1))),
+        Box::new(|cc| Box::new(MyApp::new(pip_frame_data.1,pip_input_stream.0))),
     )
     .unwrap(); 
 }

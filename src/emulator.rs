@@ -1,9 +1,11 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::thread;
 
 use crossbeam::channel::{bounded, select, Receiver, Sender};
+use egui::Key;
 
 use crate::bus::{start_bus_thread, RWMessage, RWResult};
 use crate::cpu::start_cpu_thread;
@@ -24,7 +26,7 @@ pub struct Emulator {
     pub pip_log: (Sender<String>, Receiver<String>),
     pub pip_ppu_frame: (Sender<Frame>, Receiver<Frame>),
     pub palettes: Palettes,
-    frame_cache: Frame,
+    pub pip_input_stream: (Sender<HashSet<egui::Key>>, Receiver<HashSet<egui::Key>>),
     // pub window: Window,
 }
 
@@ -45,6 +47,7 @@ impl Emulator {
         let pip_rom = bounded(1);
         let pip_log = bounded(1);
         let pip_ppu_frame = bounded(1);
+        let pip_input_stream = bounded(5);
         Emulator {
             pip_cpu2bus,
             pip_bus2cpu,
@@ -60,7 +63,7 @@ impl Emulator {
             pip_log,
             pip_ppu_frame,
             palettes: Palettes::new(),
-            frame_cache: Frame::new(),
+            pip_input_stream,
         }
     }
 
@@ -74,6 +77,7 @@ impl Emulator {
             self.pip_bus2apu.0.clone(),
             self.pip_apu2bus.1.clone(),
             self.pip_rom.1.clone(),
+            self.pip_input_stream.1.clone(),
         );
         start_cpu_thread(
             self.pip_cpu2bus.0.clone(),

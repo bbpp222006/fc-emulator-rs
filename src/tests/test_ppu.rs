@@ -1,5 +1,4 @@
 use regex::Regex;
-use std::f32::consts::E;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
@@ -13,12 +12,11 @@ pub fn run_test() {
     let rom_path = "rom/nestest.nes";
     let emulator = Emulator::new();
     let pip_ppu_frameout = emulator.pip_ppu_frame.1.clone();
+    let pip_input_stream_in = emulator.pip_input_stream.0.clone();
     emulator.start();
     emulator.load_rom(rom_path);
     thread::spawn(move || loop {
         emulator.clock(); // 在此处运行模拟器的单步执行功能
-        // let emulator_log_line = emulator.get_log(); 
-        // println!("{}", emulator_log_line);
     });
 
     let options = eframe::NativeOptions {
@@ -29,7 +27,7 @@ pub fn run_test() {
     eframe::run_native(
         "Show an image with eframe/egui",
         options,
-        Box::new(|cc| Box::new(MyApp::new(pip_ppu_frameout))),
+        Box::new(|cc| Box::new(MyApp::new(pip_ppu_frameout,pip_input_stream_in))),
     )
     .unwrap();
 }

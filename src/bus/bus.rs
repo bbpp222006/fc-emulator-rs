@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::{default, thread};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
+use egui::Key;
 use crate::mapper::{Mapper, create_mapper};
-use crate::bus::{vram,cpu_ram,registers,palettes};
+use crate::bus::{vram,cpu_ram,registers,palettes,apu_io_registers};
 
 pub struct RWMessage {
     pub operate_type: RWType,
@@ -50,12 +52,12 @@ pub struct Bus {
     vram: vram::Vram,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
     palettes: palettes::Palettes,
-    apu_io_registers: [u8; 0x20],
+    apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
 }
 
 impl Bus {
-    pub fn new() -> Self {
+    pub fn new(input_stream: Receiver<HashSet<Key>>) -> Self {
         let default_mapper = Box::new(crate::mapper::mapper000::NromMapper::new(vec![0,0], vec![0,0], 1));
         Bus {
             interrupt_status: 0b0000_0000,
@@ -64,7 +66,7 @@ impl Bus {
             vram: vram::Vram::new(),
             vram_buffer: 0,
             palettes: palettes::Palettes::new(),
-            apu_io_registers: [0x00; 0x20],
+            apu_io_registers: apu_io_registers::ApuIoRegisters::new(input_stream),
             mapper: default_mapper,
         }
     }
@@ -74,7 +76,7 @@ impl Bus {
         // self.palettes.reset();
         self.registers.reset();
         self.vram.reset();
-        self.apu_io_registers = [0xFF; 0x20]; // debug
+        self.apu_io_registers.reset(); // debug
     }
 
     pub fn load_rom(&mut self, rom: Vec<u8>) {
@@ -114,7 +116,7 @@ impl Bus {
             }
             0x4000..=0x401F => {
                 //高三位为2:  APU 寄存器
-                self.apu_io_registers[(addr - 0x4000) as usize]
+                self.apu_io_registers.read(addr)
             }
             0x4020..=0x5FFF => {
                 //高三位为3:  扩展 ROM
@@ -153,14 +155,14 @@ impl Bus {
                         self.vram.write(self.vram.vram_addr, data);
                         // VRAM 地址自增
                         self.vram.vram_addr+= if self.registers.read(0x2000) & 0b0000_0100 != 0 { 32 } else { 1 };
-                        println!("{}", format!("write vram: {:04X} {:02X}", self.vram.vram_addr, data));
+                        // println!("{}", format!("write vram: {:04X} {:02X}", self.vram.vram_addr, data));
                     },
                     _ => (),
                 }
             }
             // 0x4000 - 0x401F: APU 和 I/O 寄存器
             0x4000..=0x401F => {
-                self.apu_io_registers[(addr - 0x4000) as usize] = data;
+                self.apu_io_registers.write(addr, data)
             }
             0x4020..=0x5FFF => {
                 //高三位为3:  扩展 ROM
@@ -221,8 +223,8 @@ impl Bus {
     }
 }
 
-pub fn start_bus_thread(bus2cpu:Sender<RWResult>,cpu2bus:Receiver<RWMessage>,bus2ppu:Sender<RWResult>,ppu2bus:Receiver<RWMessage>,bus2apu:Sender<RWResult>,apu2bus:Receiver<RWMessage>,rom2bus:Receiver<Vec<u8>>) {
-    let mut bus = Bus::new();
+pub fn start_bus_thread(bus2cpu:Sender<RWResult>,cpu2bus:Receiver<RWMessage>,bus2ppu:Sender<RWResult>,ppu2bus:Receiver<RWMessage>,bus2apu:Sender<RWResult>,apu2bus:Receiver<RWMessage>,rom2bus:Receiver<Vec<u8>>,input_stream:Receiver<HashSet<egui::Key>>) {
+    let mut bus = Bus::new(input_stream);
     let mut is_success = false;
     let mut data = None;
     thread::spawn(move || {

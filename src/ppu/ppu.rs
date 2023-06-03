@@ -392,9 +392,6 @@ impl Ppu {
             
             // 获取tile 索引
             let tile_index = name_table[i];
-            if tile_index==0x2a{
-                println!("tile_index:{:x}",i);
-            }
 
             // 获取调色板索引
             let pattern_x = i % 32;
