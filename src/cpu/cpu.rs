@@ -22,6 +22,7 @@ pub struct Cpu {
      instruction_info: InstructionInfo, // 当前指令信息
      cpu_cycle_wait: u64,
     pub channels: CpuChannels,
+    log: String,
 }
 
 pub struct CpuChannels {
@@ -29,11 +30,20 @@ pub struct CpuChannels {
     mem2cpu_out: Receiver<RWResult>,
 }
 
-pub enum Interrupt {
-    None,
-    NMI,
-    IRQ,
-    Reset,
+pub struct Interrupt {
+    nmi: bool,
+    irq: bool,
+    reset: bool,
+}
+
+impl Default for Interrupt {
+    fn default() -> Self {
+        Interrupt {
+            nmi: false,
+            irq: false,
+            reset: false,
+        }
+    }
 }
 
 pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>,pip_log_in:Sender<String>) {
@@ -47,6 +57,8 @@ pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResu
                     if cpu.cpu_cycle_wait == 0 {
                         // println!("cpu开始执行指令");
                         cpu.step();
+                        // let log = &cpu.log;
+                        // println!("{}",log);
                         // println!("cpu开始执行完成");
                     } else {
                         // println!("cpu等待中，等待周期数：{}",cpu.cpu_cycle_wait);
@@ -67,7 +79,6 @@ pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResu
                     // println!("接收到cpu强制执行信息，cpu开始执行指令");
                     cpu.step();
                     // println!("cpu开始执行完成");
- 
                 },
             }
             
@@ -81,20 +92,23 @@ impl Cpu {
     fn new(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>) -> Self {
         Cpu {
             registers: Registers::default(),
-            interrupt: Interrupt::None,
-            cpu_cycle: 7,
+            interrupt: Interrupt::default(),
+            cpu_cycle: 0,
             instruction_info: InstructionInfo::default(),
             cpu_cycle_wait: 0,
+
             channels: CpuChannels{
                 cpu2mem_in,
                 mem2cpu_out,
             },
+            log: String::new(),
         }
     }
     
     //https://www.nesdev.org/wiki/CPU_power_up_state ,待优化    
     fn reset(&mut self) {
         self.registers.sp = 0xFD; 
+        self.registers.pc = self.read_u16(0xFFFC);
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
@@ -122,6 +136,24 @@ impl Cpu {
         // }
     }
 
+    fn read_interrupt_status(&mut self) {
+        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::ReadInerruptStatus, address:0,value:None }).unwrap();
+        let interrupt_status = self.channels.mem2cpu_out.recv().unwrap().data.unwrap();
+        self.interrupt.irq = interrupt_status & 1 == 1;
+        self.interrupt.nmi = interrupt_status & 2 == 2;
+        self.interrupt.reset = interrupt_status & 4 == 4;
+    }
+    
+    fn write_interrupt_status(&mut self) {
+        let mut interrupt_status = 0;
+        interrupt_status|=if self.interrupt.irq {1} else {0};
+        interrupt_status|=if self.interrupt.nmi {2} else {0};
+        interrupt_status|=if self.interrupt.reset {4} else {0};
+        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::WriteInerruptStatus, address:0,value:Some(interrupt_status) }).unwrap();
+        self.channels.mem2cpu_out.recv().unwrap();
+    }
+
+
     fn read_u16(&self, address: u16) -> u16 {
         let lo = self.read(address) as u16;
         let hi = self.read(address + 1) as u16;
@@ -137,8 +169,84 @@ impl Cpu {
 
     /// 执行一条指令
     pub fn step(&mut self) {
+        self.read_interrupt_status();
+        // 如果有复位信号，执行复位
+        if self.interrupt.reset {
+            self.reset();
+            self.interrupt.reset = false;
+        }
+        // 如果有nmi信号，执行nmi
+        if self.interrupt.nmi {
+            self.nmi();
+            self.interrupt.nmi = false;
+        }
+        // 如果有irq信号，执行irq
+        if self.interrupt.irq && !self.registers.get_flag(StatusFlags::InterruptDisable) {
+            self.irq();
+            self.interrupt.irq = false;
+        }
+        self.write_interrupt_status();
         // 解码操作码为指令和寻址模式
-        self.instruction_info = decode_opcode(self.read(self.registers.pc));
+        let opcode = self.read(self.registers.pc);
+        self.instruction_info = decode_opcode(opcode);
+
+
+        {
+            // 用于打印日志
+            use crate::cpu::instructions::Instruction::*;
+            let instruction_info = &self.instruction_info;
+            let address = self.registers.pc;
+            // 开始的地址
+            let mut output = format!("{:04X}  ", address); 
+            let operand_size = instruction_info.operand_size;
+
+            // opcode 和 根据寻址模式的接下来几位内存
+            output.push_str(&format!("{:02X} ", opcode));
+            let mut tmp=vec![];
+            for i in 1..=operand_size-1 {
+                let code = self.read(address + i as u16);
+                tmp.push(code);
+                output.push_str(&format!("{:02X} ", code));
+            }
+            //将tmp向量合并成u16
+            let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
+
+            output = format!("{: <15}", output);
+
+            // 如果opcode是拓展指令，则在前面加*
+            if instruction_info.unofficial {
+                output.push_str(&"*");
+            } else {
+                output.push_str(&" ");
+            }
+
+            // 具体指令
+            match  instruction_info.instruction {
+                DOP|TOP=>{
+                    output.push_str(&format!("NOP "));
+                }
+                ISC=>{
+                    output.push_str(&format!("ISB "));
+                }
+                _=>{
+                    output.push_str(&format!("{:?} ", instruction_info.instruction));
+                }
+            }
+            self.log = format!(
+                "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3}, {:2} CYC:{}",
+                output,
+                self.registers.a,
+                self.registers.x,
+                self.registers.y,
+                self.registers.p,
+                self.registers.sp,
+                0,
+                0,
+                self.cpu_cycle,
+            );
+        }
+
+
         let current_cyc = self.cpu_cycle;
         self.execute();  
         self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
@@ -450,6 +558,7 @@ impl Cpu {
             Instruction::RLA => self.rla(),
             Instruction::SRE => self.sre(),
             Instruction::RRA => self.rra(),
+            Instruction::BRK => self.brk(),
             // ... 处理其他指令
             _ => panic!("{:?}指令暂未实现",self.instruction_info.instruction), // 如果尚未实现的指令，触发未实现错误
         }
@@ -469,6 +578,14 @@ impl Cpu {
         // 更新堆栈指针（SP），将其减 1，指向下一个可用位置
         self.registers.sp = self.registers.sp.wrapping_sub(1);
     }
+
+    fn stack_push_16(&mut self, value: u16) {
+        // 将 16 位值的高 8 位压入堆栈
+        self.stack_push(((value >> 8) & 0xFF) as u8);
+    
+        // 将 16 位值的低 8 位压入堆栈
+        self.stack_push((value & 0xFF) as u8);
+    }
     
     fn stack_pop(&mut self) -> u8 {
 
@@ -486,6 +603,28 @@ impl Cpu {
     
         // 返回弹出的值
         value
+    }
+
+    fn nmi(&mut self) {
+        // 保存当前 PC 寄存器的值
+        self.stack_push_16(self.registers.pc);
+    
+        // 保存当前状态寄存器的值
+        self.stack_push(self.registers.p);
+    
+        // 将 PC 寄存器设置为 NMI 中断处理程序的地址
+        self.registers.pc = self.read_u16(0xFFFA);
+    }
+
+    fn irq(&mut self) {
+        // 保存当前 PC 寄存器的值
+        self.stack_push_16(self.registers.pc);
+    
+        // 保存当前状态寄存器的值
+        self.stack_push(self.registers.p);
+    
+        // 将 PC 寄存器设置为 IRQ 中断处理程序的地址
+        self.registers.pc = self.read_u16(0xFFFE);
     }
 
     fn check_zsflag(&mut self, register: u8) {
@@ -1455,6 +1594,15 @@ impl Cpu {
 
     }
 
+    fn brk (&mut self){
+        self.registers.pc+=2;
+        self.stack_push_16(self.registers.pc);
+        self.stack_push(self.registers.p);
+        self.registers.set_flag(StatusFlags::InterruptDisable, true);
+        self.registers.set_flag(StatusFlags::BreakCommand, true);
+        self.registers.pc = self.read_u16(0xFFFE);
+        self.cpu_cycle+=7;
+    }
     // ... 实现其他指令
 }
 

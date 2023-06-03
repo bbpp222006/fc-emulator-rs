@@ -73,12 +73,16 @@ impl Registers {
         }
     }
 
-    pub fn read(&self, addr: u16) -> u8 {
-        let reg_addr = (addr & 0x0007) as usize; 
+    pub fn read(&mut self, addr: u16) -> u8 {
+        let reg_addr = 0x2000+(addr & 0x0007) as usize; 
         match reg_addr {
             0x2000 => self.ppuctrl,
             0x2001 => self.ppumask,
-            0x2002 => self.ppustatus,
+            0x2002 => {
+                let data = self.ppustatus; // 读取ppustatus会清除vblank标志
+                self.ppustatus &= 0x7F;
+                data
+            },
             0x2003 => self.oamaddr,
             0x2004 => self.oamdata,
             0x2005 => self.ppuscroll,
@@ -89,7 +93,7 @@ impl Registers {
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
-        let reg_addr = (addr & 0x0007) as usize; 
+        let reg_addr = 0x2000+(addr & 0x0007) as usize; 
         match reg_addr {
             0x2000 => self.ppuctrl = data,
             0x2001 => self.ppumask = data,

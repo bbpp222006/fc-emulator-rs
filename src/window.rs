@@ -6,10 +6,12 @@ use egui_extras::image::RetainedImage;
 use rand::Rng;
 use std::thread;
 use std::time::Duration;
+use crate::utils::Palettes;
 
 pub struct MyApp {
     image: RetainedImage,
     pip_frame_data_out: Receiver<Frame>,
+    palette: Palettes,
 }
 
 impl MyApp {
@@ -22,7 +24,33 @@ impl MyApp {
             )
             .unwrap(),
             pip_frame_data_out,
+            palette: Palettes::new(),
         }
+    }
+
+    pub fn frame_to_color_image(&self, frame: &Frame) -> RetainedImage {
+        // 确保数据长度与图像尺寸匹配
+        assert_eq!(
+            (frame.width * frame.height) as usize,
+            frame.data.len(),
+            "数据长度与图像尺寸不匹配"
+        );
+    
+        // 将color index转换为rgba color
+        let mut rgba_data = Vec::with_capacity(frame.data.len() * 4);
+        for color_index in frame.data.iter() {
+            let rgba = self.palette.colors[*color_index as usize];
+            rgba.map(|c| rgba_data.push(c));
+
+        }
+        // 创建 `ColorImage`
+        RetainedImage::from_color_image(
+            "debug_name",
+            ColorImage::from_rgba_unmultiplied(
+                [frame.width as usize, frame.height as usize],
+                &rgba_data,
+            ),
+        )
     }
 }
 
@@ -31,8 +59,8 @@ impl eframe::App for MyApp {
         select! {
             recv(self.pip_frame_data_out) -> new_frame =>{
                 let new_frame= new_frame.expect("接收新图像时发生错误");
-                self.image = frame_to_color_image(&new_frame);
-                println!("更改图像");
+                self.image = self.frame_to_color_image(&new_frame);
+                // println!("更改图像");
             }
             default =>(),
         };
@@ -52,23 +80,7 @@ impl eframe::App for MyApp {
         });
         ctx.request_repaint();
     }
+
+    
 }
 
-fn frame_to_color_image(frame: &Frame) -> RetainedImage {
-    // 确保数据长度与图像尺寸匹配
-    assert_eq!(
-        (frame.width * frame.height * 4) as usize,
-        frame.data.len(),
-        "数据长度与图像尺寸不匹配"
-    );
-
-    // 创建 `ColorImage`
-
-    RetainedImage::from_color_image(
-        "debug_name",
-        ColorImage::from_rgba_unmultiplied(
-            [frame.width as usize, frame.height as usize],
-            &frame.data,
-        ),
-    )
-}

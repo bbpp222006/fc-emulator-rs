@@ -39,7 +39,9 @@ impl Mapper for NromMapper {
 
     fn read_chr_rom(&self, addr: u16) -> u8 {
         let addr = addr as usize % self.chr_rom.len();
-        self.chr_rom[addr]
+        let a = self.chr_rom[addr];
+        // println!("{:}",a);
+        a
     }
 
 
