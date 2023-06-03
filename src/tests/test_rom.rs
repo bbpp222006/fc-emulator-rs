@@ -4,7 +4,8 @@ use std::io::{self, BufRead};
 use std::path::Path;
 use regex::Regex;
 
-// 你的模拟器的引用
+// 模拟器的引用
+// 注意：运行此测试时，需要将src\cpu\cpu.rs中的reset函数中的self.registers.pc = self.read_u16(0xFFFC);注释掉，从特定地址直接运行
 use crate::emulator::Emulator;
 
 fn compare_logs(emulator_log: &str, expected_log: &str) -> bool {

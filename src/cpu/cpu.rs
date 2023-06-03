@@ -108,7 +108,7 @@ impl Cpu {
     //https://www.nesdev.org/wiki/CPU_power_up_state ,待优化    
     fn reset(&mut self) {
         self.registers.sp = 0xFD; 
-        self.registers.pc = self.read_u16(0xFFFC);
+        self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
