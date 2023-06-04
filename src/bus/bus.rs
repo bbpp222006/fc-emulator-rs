@@ -5,6 +5,8 @@ use egui::Key;
 use crate::mapper::{Mapper, create_mapper};
 use crate::bus::{vram,registers,palettes,apu_io_registers};
 
+use super::cpu_ram;
+
 pub struct RWMessage {
     pub operate_type: RWType,
     pub address: u16,
@@ -37,6 +39,7 @@ pub struct Bus {
     palettes: palettes::Palettes,
     apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
+    cpu_ram: cpu_ram::CpuRam, // debug
 }
 
 impl Bus {
@@ -50,6 +53,7 @@ impl Bus {
             palettes: palettes::Palettes::new(),
             apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
             mapper: default_mapper,
+            cpu_ram: cpu_ram::CpuRam::new(), // debug
         }
     }
 
@@ -58,6 +62,7 @@ impl Bus {
         self.registers.reset();
         self.vram.reset();
         self.apu_io_registers.reset(); // debug
+        self.cpu_ram.reset(); // debug
     }
 
     pub fn load_rom(&mut self, rom: Vec<u8>) {
@@ -66,6 +71,10 @@ impl Bus {
 
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
+            // 0x0000..=0x1fff => {
+            //     // 系统主内存
+            //     self.cpu_ram.read(addr)
+            // }
             0x2000..=0x3FFF => {
                 //高三位为1:  PPU 寄存器
                 let mut out_data = self.registers.read(addr);
@@ -113,6 +122,10 @@ impl Bus {
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
+            // 0x0000..=0x1fff => {
+            //     // 系统主内存
+            //     self.cpu_ram.write(addr, data);
+            // }
             // 0x2000 - 0x3FFF: PPU 寄存器 (8 字节镜像，每 0x8 个地址有一个寄存器)
             0x2000..=0x3FFF => {
                 self.registers.write(addr, data);

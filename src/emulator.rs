@@ -79,6 +79,7 @@ impl Emulator {
             self.pip_rom.1.clone(),
             self.pip_input_stream.1.clone(),
         );
+
         start_cpu_thread(
             self.pip_cpu2bus.0.clone(),
             self.pip_bus2cpu.1.clone(),

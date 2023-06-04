@@ -110,7 +110,7 @@ impl Cpu {
     //https://www.nesdev.org/wiki/CPU_power_up_state ,待优化    
     fn reset(&mut self) {
         self.registers.sp = 0xFD; 
-        self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
+        // self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
@@ -135,7 +135,6 @@ impl Cpu {
     }
 
     fn write(&mut self, address: u16, data: u8) {
-
         match address {
             0x0000..=0x1FFF => {
                 //高三位为0:  系统主内存
@@ -144,7 +143,7 @@ impl Cpu {
             _ => {
                 //高三位不为0:  其他设备
                 self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Write, address:address, value:Some(data) }).unwrap();
-                let write_result = self.channels.mem2cpu_out.recv().unwrap();
+                self.channels.mem2cpu_out.recv().unwrap();
             }
         }
     }
