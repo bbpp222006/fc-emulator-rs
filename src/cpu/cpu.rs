@@ -11,16 +11,18 @@ use crate::utils::GlobalSignal;
 use std::{thread, vec};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 
+use super::cpu_ram::CpuRam;
 use super::instructions::InstructionInfo;
 
 
 /// 6502 CPU 的结构体
 pub struct Cpu {
-     registers: Registers, // CPU 寄存器
-     interrupt: Interrupt, // 中断类型
-     cpu_cycle: u64, // CPU 周期
-     instruction_info: InstructionInfo, // 当前指令信息
-     cpu_cycle_wait: u64,
+    registers: Registers, // CPU 寄存器
+    interrupt: Interrupt, // 中断类型
+    cpu_cycle: u64, // CPU 周期
+    instruction_info: InstructionInfo, // 当前指令信息
+    cpu_cycle_wait: u64,
+    cpu_ram: CpuRam, // CPU 内存
     pub channels: CpuChannels,
     log: String,
 }
@@ -31,7 +33,7 @@ pub struct CpuChannels {
 }
 
 pub struct Interrupt {
-    nmi: bool,
+    nmi: (bool,bool), // (当前nmi状态,上一次nmi状态)
     irq: bool,
     reset: bool,
 }
@@ -39,7 +41,7 @@ pub struct Interrupt {
 impl Default for Interrupt {
     fn default() -> Self {
         Interrupt {
-            nmi: false,
+            nmi: (false,false),
             irq: false,
             reset: false,
         }
@@ -96,7 +98,7 @@ impl Cpu {
             cpu_cycle: 0,
             instruction_info: InstructionInfo::default(),
             cpu_cycle_wait: 0,
-
+            cpu_ram: CpuRam::new(),
             channels: CpuChannels{
                 cpu2mem_in,
                 mem2cpu_out,
@@ -113,41 +115,52 @@ impl Cpu {
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
         self.cpu_cycle_wait=0;
+        self.log=String::new();
+        self.cpu_ram.reset();
     }
 
     fn read(&self, address: u16) -> u8 {
-        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Read, address:address,value:None }).unwrap();
-        let read_result = self.channels.mem2cpu_out.recv().unwrap();
-        // if read_result.is_success{
-        //     println!("cpu从内存{:04X}读取数据{:02X}",address , read_result.data.unwrap());
-        // }else {
-        //     println!("cpu从内存读取数据失败");
-        // }
-        read_result.data.unwrap()
+        match address {
+            0x0000..=0x1FFF => {
+                //高三位为0:  系统主内存
+                self.cpu_ram.read(address)
+            }
+            _ => {
+                //高三位不为0:  其他设备
+                self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Read, address:address,value:None }).unwrap();
+                let read_result = self.channels.mem2cpu_out.recv().unwrap();
+                read_result.data.unwrap()
+            }
+        }
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Write, address:address, value:Some(data) }).unwrap();
-        let write_result = self.channels.mem2cpu_out.recv().unwrap();
-        // if write_result.is_success{
-        //     println!("cpu向内存{:04X}写入数据{:02X}",address , data);
-        // }else {
-        //     println!("cpu向内存写入数据失败");
-        // }
+
+        match address {
+            0x0000..=0x1FFF => {
+                //高三位为0:  系统主内存
+                self.cpu_ram.write(address,data);
+            }
+            _ => {
+                //高三位不为0:  其他设备
+                self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Write, address:address, value:Some(data) }).unwrap();
+                let write_result = self.channels.mem2cpu_out.recv().unwrap();
+            }
+        }
     }
 
     fn read_interrupt_status(&mut self) {
         self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::ReadInerruptStatus, address:0,value:None }).unwrap();
         let interrupt_status = self.channels.mem2cpu_out.recv().unwrap().data.unwrap();
         self.interrupt.irq = interrupt_status & 1 == 1;
-        self.interrupt.nmi = interrupt_status & 2 == 2;
+        self.interrupt.nmi.0 = interrupt_status & 2 == 2;
         self.interrupt.reset = interrupt_status & 4 == 4;
     }
     
     fn write_interrupt_status(&mut self) {
         let mut interrupt_status = 0;
         interrupt_status|=if self.interrupt.irq {1} else {0};
-        interrupt_status|=if self.interrupt.nmi {2} else {0};
+        interrupt_status|=if self.interrupt.nmi.0 {2} else {0};
         interrupt_status|=if self.interrupt.reset {4} else {0};
         self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::WriteInerruptStatus, address:0,value:Some(interrupt_status) }).unwrap();
         self.channels.mem2cpu_out.recv().unwrap();
@@ -173,78 +186,81 @@ impl Cpu {
         // 如果有复位信号，执行复位
         if self.interrupt.reset {
             self.reset();
+            // println!("reset");
             self.interrupt.reset = false;
         }
-        // 如果有nmi信号，执行nmi
-        if self.interrupt.nmi {
+        // 执行nmi，边缘触发
+        if (self.interrupt.nmi.0==true) && (self.interrupt.nmi.1==false)  {
             self.nmi();
-            self.interrupt.nmi = false;
+            // println!("nmi");
         }
         // 如果有irq信号，执行irq
         if self.interrupt.irq && !self.registers.get_flag(StatusFlags::InterruptDisable) {
             self.irq();
+            // println!("irq");
             self.interrupt.irq = false;
         }
-        self.write_interrupt_status();
+        self.interrupt.nmi.1 = self.interrupt.nmi.0;
+        // self.write_interrupt_status();
         // 解码操作码为指令和寻址模式
         let opcode = self.read(self.registers.pc);
         self.instruction_info = decode_opcode(opcode);
 
 
-        {
-            // 用于打印日志
-            use crate::cpu::instructions::Instruction::*;
-            let instruction_info = &self.instruction_info;
-            let address = self.registers.pc;
-            // 开始的地址
-            let mut output = format!("{:04X}  ", address); 
-            let operand_size = instruction_info.operand_size;
+        // {
+        //     // 用于打印日志
+        //     use crate::cpu::instructions::Instruction::*;
+        //     let instruction_info = &self.instruction_info;
+        //     let address = self.registers.pc;
+        //     // 开始的地址
+        //     let mut output = format!("{:04X}  ", address); 
+        //     let operand_size = instruction_info.operand_size;
 
-            // opcode 和 根据寻址模式的接下来几位内存
-            output.push_str(&format!("{:02X} ", opcode));
-            let mut tmp=vec![];
-            for i in 1..=operand_size-1 {
-                let code = self.read(address + i as u16);
-                tmp.push(code);
-                output.push_str(&format!("{:02X} ", code));
-            }
-            //将tmp向量合并成u16
-            let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
+        //     // opcode 和 根据寻址模式的接下来几位内存
+        //     output.push_str(&format!("{:02X} ", opcode));
+        //     let mut tmp=vec![];
+        //     for i in 1..=operand_size-1 {
+        //         let code = self.read(address + i as u16);
+        //         tmp.push(code);
+        //         output.push_str(&format!("{:02X} ", code));
+        //     }
+        //     //将tmp向量合并成u16
+        //     let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
 
-            output = format!("{: <15}", output);
+        //     output = format!("{: <15}", output);
 
-            // 如果opcode是拓展指令，则在前面加*
-            if instruction_info.unofficial {
-                output.push_str(&"*");
-            } else {
-                output.push_str(&" ");
-            }
+        //     // 如果opcode是拓展指令，则在前面加*
+        //     if instruction_info.unofficial {
+        //         output.push_str(&"*");
+        //     } else {
+        //         output.push_str(&" ");
+        //     }
 
-            // 具体指令
-            match  instruction_info.instruction {
-                DOP|TOP=>{
-                    output.push_str(&format!("NOP "));
-                }
-                ISC=>{
-                    output.push_str(&format!("ISB "));
-                }
-                _=>{
-                    output.push_str(&format!("{:?} ", instruction_info.instruction));
-                }
-            }
-            self.log = format!(
-                "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3}, {:2} CYC:{}",
-                output,
-                self.registers.a,
-                self.registers.x,
-                self.registers.y,
-                self.registers.p,
-                self.registers.sp,
-                0,
-                0,
-                self.cpu_cycle,
-            );
-        }
+        //     // 具体指令
+        //     match  instruction_info.instruction {
+        //         DOP|TOP=>{
+        //             output.push_str(&format!("NOP "));
+        //         }
+        //         ISC=>{
+        //             output.push_str(&format!("ISB "));
+        //         }
+        //         _=>{
+        //             output.push_str(&format!("{:?} ", instruction_info.instruction));
+        //         }
+        //     }
+        //     self.log = format!(
+        //         "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3}, {:2} CYC:{}",
+        //         output,
+        //         self.registers.a,
+        //         self.registers.x,
+        //         self.registers.y,
+        //         self.registers.p,
+        //         self.registers.sp,
+        //         0,
+        //         0,
+        //         self.cpu_cycle,
+        //     );
+        // }
 
 
         let current_cyc = self.cpu_cycle;

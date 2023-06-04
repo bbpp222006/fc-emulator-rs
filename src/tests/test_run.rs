@@ -16,31 +16,21 @@ pub fn run_test() {
     let pip_ppu_frameout = emulator.pip_ppu_frame.1.clone();
     let pip_input_stream_in = emulator.pip_input_stream.0.clone();
 
-    let stop = bounded(1);
-
     emulator.start();
     emulator.load_rom(rom_path);
     let a = thread::spawn(move || loop {
         emulator.clock(); // 在此处运行模拟器的单步执行功能
-        if stop.1.try_recv().is_ok() {
-            break;
-        }
     });
 
-    let mut fps = 0.0;
-    let mut fps_time = std::time::Instant::now();
-
-    let mut frame_num = 0;
-    for _ in pip_ppu_frameout.iter() {
-        fps = 1.0 / fps_time.elapsed().as_secs_f32();
-        println!("ppu_fps: {}", fps);
-        fps_time = std::time::Instant::now();
-        frame_num += 1;
-        if frame_num == 100 {
-            stop.0.send(()).unwrap();
-            break;
-        }
-    }
-    print!("Hello World")
-
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(340.0, 261.0)),
+        ..Default::default()
+    };
+    
+    eframe::run_native(
+        "Show an image with eframe/egui",
+        options,
+        Box::new(|cc| Box::new(MyApp::new(pip_ppu_frameout,pip_input_stream_in))),
+    ).unwrap();
+    a.join().unwrap();
 }

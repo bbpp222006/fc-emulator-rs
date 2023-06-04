@@ -1,4 +1,3 @@
-pub mod cpu_ram;
 pub mod registers;
 pub mod vram;
 pub mod bus;

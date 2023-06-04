@@ -229,7 +229,7 @@ impl Ppu {
             .ppu2bus_in
             .send(RWMessage {
                 operate_type: RWType::Read,
-                address: address,
+                address,
                 value: None,
             })
             .unwrap();
@@ -495,18 +495,24 @@ impl Ppu {
                 // vblank期间，如果设置了nmi，那么就触发nmi
                 let ppuctrl =self.read_reg(PpuRegister::PpuCtrl);
                 if (self.ppustatus & 0x80==0x80) && (ppuctrl & 0x80 ==0x80) {
-                    if self.nmi_status==false{
-                        self.set_nmi(true); //边缘触发
+                    if self.nmi_status!=true{
+                        self.set_nmi(true);
+                        self.nmi_status=true;
                     }
-                    self.nmi_status=true;
                 }else {
-                    self.nmi_status=false;
+                    if self.nmi_status!=false{
+                        self.set_nmi(false);
+                        self.nmi_status=false;
+                    }
                     // self.set_nmi(false);
                 }
             }
             
             if self.scanline > 261 {
-                self.nmi_status=false;
+                if self.nmi_status!=false{
+                    self.set_nmi(false);
+                    self.nmi_status=false;
+                }
                 self.ppustatus &= 0x7f;
                 self.write_reg(PpuRegister::PpuStatus, self.ppustatus);
                 self.scanline = 0;

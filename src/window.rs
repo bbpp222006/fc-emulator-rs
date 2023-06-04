@@ -15,6 +15,8 @@ pub struct MyApp {
     pip_frame_data_out: Receiver<Frame>,
     pip_input_stream_in: Sender<HashSet<egui::Key>>,
     palette: Palettes,
+    current_time: std::time::Instant,
+    fps: f32,
 }
 
 impl MyApp {
@@ -29,6 +31,8 @@ impl MyApp {
             pip_frame_data_out,
             pip_input_stream_in,
             palette: Palettes::new(),
+            current_time: std::time::Instant::now(),
+            fps: 0.0,
         }
     }
 
@@ -64,13 +68,15 @@ impl eframe::App for MyApp {
             recv(self.pip_frame_data_out) -> new_frame =>{
                 let new_frame= new_frame.expect("接收新图像时发生错误");
                 self.image = self.frame_to_color_image(&new_frame);
+                self.fps = 1.0 / self.current_time.elapsed().as_secs_f32();
+                self.current_time = std::time::Instant::now();
                 // println!("更改图像");
             }
             default =>(),
         };
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("This is an image:");
+            ui.heading(format!("FPS: {:.2}", self.fps));
             ui.add(egui::Image::new(self.image.texture_id(ctx), {
                 let min_x = 256.0;
                 let min_y = 240.0;

@@ -3,7 +3,7 @@ use std::{default, thread};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use egui::Key;
 use crate::mapper::{Mapper, create_mapper};
-use crate::bus::{vram,cpu_ram,registers,palettes,apu_io_registers};
+use crate::bus::{vram,registers,palettes,apu_io_registers};
 
 pub struct RWMessage {
     pub operate_type: RWType,
@@ -25,29 +25,12 @@ pub struct RWResult {
     pub is_success: bool,
 }
 
-#[derive(Clone)]
-pub struct CpuBus {
-    cpu2bus_out: Receiver<RWMessage>,
-    pub cpu2bus_in: Sender<RWMessage>,
-    bus2cpu_in: Sender<RWResult>,
-    pub bus2cpu_out: Receiver<RWResult>,
-}
-
-#[derive(Clone)]
-pub struct PpuBus {
-    ppu2bus_out: Receiver<RWMessage>,
-    pub ppu2bus_in: Sender<RWMessage>,
-    bus2ppu_in: Sender<RWResult>,
-    pub bus2ppu_out: Receiver<RWResult>,
-}
-
 pub struct Bus {
     // 0b0000_0xxx
     //   |||| |||+-- IRQ
     //   |||| ||+--- VBlank/NMI
     //   |||| |+---- Reset
     interrupt_status: u8, 
-    cpu_ram: cpu_ram::CpuRam,
     registers: registers::Registers,
     vram: vram::Vram,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
@@ -61,7 +44,6 @@ impl Bus {
         let default_mapper = Box::new(crate::mapper::mapper000::NromMapper::new(vec![0,0], vec![0,0], 1));
         Bus {
             interrupt_status: 0b0000_0000,
-            cpu_ram: cpu_ram::CpuRam::new(),
             registers: registers::Registers::new(),
             vram: vram::Vram::new(),
             vram_buffer: 0,
@@ -72,7 +54,6 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
-        self.cpu_ram.reset();
         // self.palettes.reset();
         self.registers.reset();
         self.vram.reset();
@@ -85,10 +66,6 @@ impl Bus {
 
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x1FFF => {
-                //高三位为0:  系统主内存
-                self.cpu_ram.read(addr)
-            }
             0x2000..=0x3FFF => {
                 //高三位为1:  PPU 寄存器
                 let mut out_data = self.registers.read(addr);
@@ -136,10 +113,6 @@ impl Bus {
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
-            // 0x0000 - 0x1FFF: RAM (2KB, 但前 0x800 字节镜像 3 次)
-            0x0000..=0x1FFF => {
-                self.cpu_ram.write(addr, data);
-            }
             // 0x2000 - 0x3FFF: PPU 寄存器 (8 字节镜像，每 0x8 个地址有一个寄存器)
             0x2000..=0x3FFF => {
                 self.registers.write(addr, data);
@@ -202,13 +175,9 @@ impl Bus {
                 // pattern table
                 self.mapper.write_chr_rom(addr, data);
             }
-            0x2000..=0x3EFF => {
+            0x2000..=0x3FFF => {
                 // nametable,attribute table 都在这里
                 self.vram.write(addr, data);
-            }
-            0x3F00..=0x3FFF => {
-                // palette table
-                self.palettes.write(addr, data);
             }
             _ => {} // 不可能的地址范围
         }

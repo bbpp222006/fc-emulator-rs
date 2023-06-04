@@ -10,11 +10,13 @@ use std::thread;
 use std::time::Duration;
 
 fn create_random_color_image(width: u32, height: u32) -> Frame {
-    let size = (width * height * 4) as usize;
+    let size = (width * height) as usize;
     let mut rng = rand::thread_rng();
     let mut data: Vec<u8> = Vec::with_capacity(size);
     for _ in 0..size {
-        data.push(rng.gen());
+        // 0-64 随机数
+        let a = rng.gen_range(0..64);
+        data.push(a);
     }
 
     Frame{
