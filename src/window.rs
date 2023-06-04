@@ -81,17 +81,22 @@ impl eframe::App for MyApp {
             // 接收输入
             let input_state = ui.input(|i| i.keys_down.clone());
                 // println!("{:?}", input_state);
-                match self.pip_input_stream_in.try_send(input_state){
-                    Ok(_) => (),
-                    Err(err) => match err {
-                        crossbeam::channel::TrySendError::Full(_) => {
-                            // println!("输入管道已满,直接丢弃");
-                        }
-                        crossbeam::channel::TrySendError::Disconnected(_) => {
-                            // println!("输入管道已断开");
-                        }
-                    },
-                };
+                if ! input_state.is_empty() {
+                    match self.pip_input_stream_in.try_send(input_state){
+                        Ok(_) => {
+                            
+                        },
+                        Err(err) => match err {
+                            crossbeam::channel::TrySendError::Full(_) => {
+                                // println!("输入管道已满,直接丢弃");
+                            }
+                            crossbeam::channel::TrySendError::Disconnected(_) => {
+                                // println!("输入管道已断开");
+                            }
+                        },
+                    };
+                } 
+                
         
         });
         ctx.request_repaint();

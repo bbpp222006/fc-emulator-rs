@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::{default, thread};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use egui::Key;
@@ -57,7 +57,7 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(input_stream: Receiver<HashSet<Key>>) -> Self {
+    pub fn new() -> Self {
         let default_mapper = Box::new(crate::mapper::mapper000::NromMapper::new(vec![0,0], vec![0,0], 1));
         Bus {
             interrupt_status: 0b0000_0000,
@@ -66,7 +66,7 @@ impl Bus {
             vram: vram::Vram::new(),
             vram_buffer: 0,
             palettes: palettes::Palettes::new(),
-            apu_io_registers: apu_io_registers::ApuIoRegisters::new(input_stream),
+            apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
             mapper: default_mapper,
         }
     }
@@ -224,12 +224,37 @@ impl Bus {
 }
 
 pub fn start_bus_thread(bus2cpu:Sender<RWResult>,cpu2bus:Receiver<RWMessage>,bus2ppu:Sender<RWResult>,ppu2bus:Receiver<RWMessage>,bus2apu:Sender<RWResult>,apu2bus:Receiver<RWMessage>,rom2bus:Receiver<Vec<u8>>,input_stream:Receiver<HashSet<egui::Key>>) {
-    let mut bus = Bus::new(input_stream);
+    let mut bus = Bus::new();
     let mut is_success = false;
     let mut data = None;
     thread::spawn(move || {
         loop{
             select! {
+                recv(input_stream) -> input => {
+                    match input {
+                        Ok(input) => {
+                            let mut current_input = VecDeque::from([0; 8].to_vec());
+                            for key in input {
+                                match key {
+                                    Key::J => current_input[0] = 1,
+                                    Key::K => current_input[1] = 1,
+                                    Key::Space => current_input[2] = 1,
+                                    Key::Enter => current_input[3] = 1,
+                                    Key::W => current_input[4] = 1,
+                                    Key::S => current_input[5] = 1,
+                                    Key::A => current_input[6] = 1,
+                                    Key::D => current_input[7] = 1,
+                                    _ => {}
+                                }
+                            }
+                            if bus.apu_io_registers.input_enable {
+                                // println!("接收到输入{:?}",current_input);
+                                bus.apu_io_registers.current_input = current_input;
+                            }
+                        },
+                        Err(_) => {}
+                    }
+                }
                 recv(rom2bus) -> msg => {
                     let rom = msg.expect("接收rom时发生错误");
                     println!("开始加载rom");

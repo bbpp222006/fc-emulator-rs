@@ -86,6 +86,8 @@ pub struct Ppu {
     ppustatus: u8,
 
     nmi_status: bool, // nmi 状态
+
+    frame_color_index_cache: [u8; 256 * 240],
     // // 当前扫描线是否在水平空白期。水平空白期是每一条扫描线渲染结束后的一个时间段，这个时期内 PPU 不会渲染任何东西，但可以进行 VRAM 的读写。
     // in_hblank: bool,
 
@@ -210,6 +212,7 @@ impl Ppu {
             // sprite_overflow: todo!(),
             current_tile_data: 0,
             tile_shift_registers: [0; 2],
+            frame_color_index_cache: [0; 256 * 240],
 
             channels: PpuChannels {
                 ppu2bus_in,
@@ -379,7 +382,6 @@ impl Ppu {
     pub fn test_render_background(&mut self) {
         // 背景暴力渲染，直接输出当前name table的数据，scorll和mask都不管
         // 一帧中pattern_table_base不会改变，所以这里直接写死
-        let mut frame_color_index = [0; 256 * 240];
         let name_table = self.get_nametable(0);
         let attribute_table = self.get_attribute_table(0);
         let ctrl = self.read_reg(PpuRegister::PpuCtrl);
@@ -388,11 +390,12 @@ impl Ppu {
             1 => 0x1000,
             _ => unreachable!(),
         };
+
+
+        let mut tile_data: [[u8; 8]; 8] = [[0; 8]; 8];
         for i in 0..0x3c0 {
-            
             // 获取tile 索引
             let tile_index = name_table[i];
-
             // 获取调色板索引
             let pattern_x = i % 32;
             let pattern_y = i / 32;
@@ -402,7 +405,6 @@ impl Ppu {
             let palette_address = 0x3f00 + palette_index as u16 * 4;
             let tile_data_address = pattern_table_base + tile_index as u16 * 16;
             // 获取tile数据
-            let mut tile_data: [[u8; 8]; 8] = [[0; 8]; 8];
             for y in 0..8 {
                 let tail_data_low = self.read(tile_data_address+y);
                 let tail_data_high = self.read(tile_data_address+y + 8);
@@ -411,24 +413,19 @@ impl Ppu {
                     let high = (tail_data_high >> (7 - x)) & 1;
                     let color_index = (high << 1) | low;
                     let color = self.read(palette_address + color_index as u16);
-                    tile_data[y as usize][x] = color
-                }
-            }
-
-            //加载进frame_color_index
-           
-            for y in 0..8 {
-                for x in 0..8 {
+                    tile_data[y as usize][x as usize] = color;
                     let frame_x = pattern_x * 8 + x;
-                    let frame_y = pattern_y * 8 + y;
-                    frame_color_index[frame_y * 256 + frame_x] = tile_data[y][x];
+                    let frame_y = pattern_y * 8 + y as usize;
+                    self.frame_color_index_cache[frame_y * 256 + frame_x] = tile_data[y as usize][x];
                 }
             }
         }
+
+
         self.channels
                 .ppu_frame_out
                 .send(Frame {
-                    data: frame_color_index.to_vec(),
+                    data: self.frame_color_index_cache.to_vec(),
                     width: 256,
                     height: 240,
                 })
@@ -497,7 +494,7 @@ impl Ppu {
             if self.scanline >241 && self.scanline < 261 {
                 // vblank期间，如果设置了nmi，那么就触发nmi
                 let ppuctrl =self.read_reg(PpuRegister::PpuCtrl);
-                if (self.ppustatus & 0x80)==0x80 && (ppuctrl & 0x80 ==0x80) {
+                if (self.ppustatus & 0x80==0x80) && (ppuctrl & 0x80 ==0x80) {
                     if self.nmi_status==false{
                         self.set_nmi(true); //边缘触发
                     }
