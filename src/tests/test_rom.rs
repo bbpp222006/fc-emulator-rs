@@ -18,9 +18,8 @@ fn compare_logs(emulator_log: &str, expected_log: &str) -> bool {
 pub fn run_test() {
     let rom_path = "rom/nestest.nes";
     let log_path = "rom/nestest.log";
-
-    let emulator =Emulator::new();
-    emulator.start();
+    let mut emulator =Emulator::new();
+    // emulator.start();
     emulator.load_rom(rom_path);
  
     let log_file = File::open(&Path::new(log_path)).expect("Unable to open log file");
@@ -41,7 +40,7 @@ pub fn run_test() {
             expected_log_line
         );
         
-        emulator.step(); // 在此处运行模拟器的单步执行功能
+        emulator.cpu.step(); // 在此处运行模拟器的单步执行功能
         current_num+=1;
         // println!("after 0x0400:{:02X}",emulator.cpu.memory.ram[0x0081]);
 

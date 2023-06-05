@@ -32,7 +32,7 @@ pub struct Bus {
     //   |||| |||+-- IRQ
     //   |||| ||+--- VBlank/NMI
     //   |||| |+---- Reset
-    interrupt_status: u8, 
+    pub interrupt_status: u8, 
     registers: registers::Registers,
     vram: vram::Vram,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
@@ -40,10 +40,11 @@ pub struct Bus {
     apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
     cpu_ram: cpu_ram::CpuRam, // debug
+    input_stream:Receiver<HashSet<egui::Key>>
 }
 
 impl Bus {
-    pub fn new() -> Self {
+    pub fn new(input_stream:Receiver<HashSet<egui::Key>>) -> Self {
         let default_mapper = Box::new(crate::mapper::mapper000::NromMapper::new(vec![0,0], vec![0,0], 1));
         Bus {
             interrupt_status: 0b0000_0000,
@@ -54,7 +55,35 @@ impl Bus {
             apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
             mapper: default_mapper,
             cpu_ram: cpu_ram::CpuRam::new(), // debug
+            input_stream
         }
+    }
+
+    pub fn clock(&mut self) {
+
+        if self.apu_io_registers.input_enable {
+            // println!("接收到输入{:?}",current_input);
+            if let Some(input) = self.input_stream.try_recv().ok() {
+                let mut current_input = VecDeque::from([0; 8].to_vec());
+                for key in input {
+                    match key {
+                        Key::J => current_input[0] = 1,
+                        Key::K => current_input[1] = 1,
+                        Key::Space => current_input[2] = 1,
+                        Key::Enter => current_input[3] = 1,
+                        Key::W => current_input[4] = 1,
+                        Key::S => current_input[5] = 1,
+                        Key::A => current_input[6] = 1,
+                        Key::D => current_input[7] = 1,
+                        _ => {}
+                    }
+                }
+                self.apu_io_registers.current_input = current_input;
+            }
+            
+        }
+
+        
     }
 
     pub fn reset(&mut self) {
@@ -205,120 +234,123 @@ impl Bus {
     }
 }
 
-pub fn start_bus_thread(bus2cpu:Sender<RWResult>,cpu2bus:Receiver<RWMessage>,bus2ppu:Sender<RWResult>,ppu2bus:Receiver<RWMessage>,bus2apu:Sender<RWResult>,apu2bus:Receiver<RWMessage>,rom2bus:Receiver<Vec<u8>>,input_stream:Receiver<HashSet<egui::Key>>) {
-    let mut bus = Bus::new();
-    let mut is_success = false;
-    let mut data = None;
-    thread::spawn(move || {
-        loop{
-            select! {
-                recv(input_stream) -> input => {
-                    match input {
-                        Ok(input) => {
-                            let mut current_input = VecDeque::from([0; 8].to_vec());
-                            for key in input {
-                                match key {
-                                    Key::J => current_input[0] = 1,
-                                    Key::K => current_input[1] = 1,
-                                    Key::Space => current_input[2] = 1,
-                                    Key::Enter => current_input[3] = 1,
-                                    Key::W => current_input[4] = 1,
-                                    Key::S => current_input[5] = 1,
-                                    Key::A => current_input[6] = 1,
-                                    Key::D => current_input[7] = 1,
-                                    _ => {}
-                                }
-                            }
-                            if bus.apu_io_registers.input_enable {
-                                // println!("接收到输入{:?}",current_input);
-                                bus.apu_io_registers.current_input = current_input;
-                            }
-                        },
-                        Err(_) => {}
-                    }
-                }
-                recv(rom2bus) -> msg => {
-                    let rom = msg.expect("接收rom时发生错误");
-                    println!("开始加载rom");
-                    bus.reset();
-                    bus.load_rom(rom);
-                }
-                recv(cpu2bus) -> msg =>{
-                    let msg = msg.expect("接收读写请求时发生错误");
-                    match msg.operate_type {
-                        RWType::Read => {
-                            data = Some(bus.cpu_read(msg.address));
-                            is_success = true;
-                        }
-                        RWType::Write => {
-                            bus.cpu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
-                            is_success = true;
-                        }
-                        RWType::ReadInerruptStatus => {
-                            data = Some(bus.interrupt_status);
-                            is_success = true;
-                        }
-                        RWType::WriteInerruptStatus => {
-                            bus.interrupt_status = msg.value.expect("写信息中未能找到具体数值");
-                            is_success = true;
-                        }
-                        _ => {
-                            unreachable!("cpu不可能的读写类型")
-                        }
-                    }
-                    bus2cpu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
-                }
-                recv(ppu2bus) -> msg =>{
-                    let msg = msg.expect("接收读写请求时发生错误");
-                    match msg.operate_type {
-                        RWType::Read => {
-                            data = Some(bus.ppu_read(msg.address));
-                            is_success = true;
-                        }
-                        RWType::Write => {
-                            bus.ppu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
-                            is_success = true;
-                        }
-                        RWType::ReadReg => {
-                            data = Some(bus.cpu_read(msg.address));
-                            is_success = true;
-                        }
-                        RWType::WriteReg => {
-                            bus.cpu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
-                            is_success = true;
-                        }
-                        RWType::ReadInerruptStatus => {
-                            data = Some(bus.interrupt_status);
-                            is_success = true;
-                        }
-                        RWType::WriteInerruptStatus => {
-                            bus.interrupt_status = msg.value.expect("写信息中未能找到具体数值");
-                            is_success = true;
-                        }
-                        _ => {
-                            unreachable!("cpu不可能的读写类型")
-                        }
-                    }
-                    bus2ppu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
-                }
-                recv(apu2bus) -> msg =>{
-                    let msg = msg.expect("接收读写请求时发生错误");
-                    match msg.operate_type {
-                        RWType::Read => {
-                            data = Some(bus.apu_read(msg.address));
-                            is_success = true;
-                        }
-                        RWType::Write => {
-                            bus.apu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
-                            is_success = true;
-                        }
-                        _ => {
-                            unreachable!("apu不可能的读写类型")
-                        }
-                    }
-                    bus2apu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
-                }
-            }
-        }
-    });
-}
+
+
+
+// pub fn start_bus_thread(bus2cpu:Sender<RWResult>,cpu2bus:Receiver<RWMessage>,bus2ppu:Sender<RWResult>,ppu2bus:Receiver<RWMessage>,bus2apu:Sender<RWResult>,apu2bus:Receiver<RWMessage>,rom2bus:Receiver<Vec<u8>>,input_stream:Receiver<HashSet<egui::Key>>) {
+//     let mut bus = Bus::new();
+//     let mut is_success = false;
+//     let mut data = None;
+//     thread::spawn(move || {
+//         loop{
+//             select! {
+//                 recv(input_stream) -> input => {
+//                     match input {
+//                         Ok(input) => {
+//                             let mut current_input = VecDeque::from([0; 8].to_vec());
+//                             for key in input {
+//                                 match key {
+//                                     Key::J => current_input[0] = 1,
+//                                     Key::K => current_input[1] = 1,
+//                                     Key::Space => current_input[2] = 1,
+//                                     Key::Enter => current_input[3] = 1,
+//                                     Key::W => current_input[4] = 1,
+//                                     Key::S => current_input[5] = 1,
+//                                     Key::A => current_input[6] = 1,
+//                                     Key::D => current_input[7] = 1,
+//                                     _ => {}
+//                                 }
+//                             }
+//                             if bus.apu_io_registers.input_enable {
+//                                 // println!("接收到输入{:?}",current_input);
+//                                 bus.apu_io_registers.current_input = current_input;
+//                             }
+//                         },
+//                         Err(_) => {}
+//                     }
+//                 }
+//                 recv(rom2bus) -> msg => {
+//                     let rom = msg.expect("接收rom时发生错误");
+//                     println!("开始加载rom");
+//                     bus.reset();
+//                     bus.load_rom(rom);
+//                 }
+//                 recv(cpu2bus) -> msg =>{
+//                     let msg = msg.expect("接收读写请求时发生错误");
+//                     match msg.operate_type {
+//                         RWType::Read => {
+//                             data = Some(bus.cpu_read(msg.address));
+//                             is_success = true;
+//                         }
+//                         RWType::Write => {
+//                             bus.cpu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
+//                             is_success = true;
+//                         }
+//                         RWType::ReadInerruptStatus => {
+//                             data = Some(bus.interrupt_status);
+//                             is_success = true;
+//                         }
+//                         RWType::WriteInerruptStatus => {
+//                             bus.interrupt_status = msg.value.expect("写信息中未能找到具体数值");
+//                             is_success = true;
+//                         }
+//                         _ => {
+//                             unreachable!("cpu不可能的读写类型")
+//                         }
+//                     }
+//                     bus2cpu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
+//                 }
+//                 recv(ppu2bus) -> msg =>{
+//                     let msg = msg.expect("接收读写请求时发生错误");
+//                     match msg.operate_type {
+//                         RWType::Read => {
+//                             data = Some(bus.ppu_read(msg.address));
+//                             is_success = true;
+//                         }
+//                         RWType::Write => {
+//                             bus.ppu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
+//                             is_success = true;
+//                         }
+//                         RWType::ReadReg => {
+//                             data = Some(bus.cpu_read(msg.address));
+//                             is_success = true;
+//                         }
+//                         RWType::WriteReg => {
+//                             bus.cpu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
+//                             is_success = true;
+//                         }
+//                         RWType::ReadInerruptStatus => {
+//                             data = Some(bus.interrupt_status);
+//                             is_success = true;
+//                         }
+//                         RWType::WriteInerruptStatus => {
+//                             bus.interrupt_status = msg.value.expect("写信息中未能找到具体数值");
+//                             is_success = true;
+//                         }
+//                         _ => {
+//                             unreachable!("cpu不可能的读写类型")
+//                         }
+//                     }
+//                     bus2ppu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
+//                 }
+//                 recv(apu2bus) -> msg =>{
+//                     let msg = msg.expect("接收读写请求时发生错误");
+//                     match msg.operate_type {
+//                         RWType::Read => {
+//                             data = Some(bus.apu_read(msg.address));
+//                             is_success = true;
+//                         }
+//                         RWType::Write => {
+//                             bus.apu_write(msg.address,msg.value.expect("写信息中未能找到具体数值"));
+//                             is_success = true;
+//                         }
+//                         _ => {
+//                             unreachable!("apu不可能的读写类型")
+//                         }
+//                     }
+//                     bus2apu.send(RWResult{data,is_success}).expect("发送读写结果时发生错误")
+//                 }
+//             }
+//         }
+//     });
+// }

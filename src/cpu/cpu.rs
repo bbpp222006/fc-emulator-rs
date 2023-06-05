@@ -5,10 +5,13 @@ use crate::cpu::instructions::Instruction;
 use crate::cpu::opcodes::decode_opcode;
 use crate::cpu::addressing_modes::AddressingMode;
 use crate::cpu::registers::{Registers,StatusFlags};
-use crate::bus::{RWMessage,RWResult,RWType};
+use crate::bus::{RWMessage,RWResult,RWType, Bus};
 use crate::utils::GlobalSignal;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{thread, vec};
+use std::sync::{Arc, Mutex};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 
 use super::cpu_ram::CpuRam;
@@ -21,10 +24,11 @@ pub struct Cpu {
     interrupt: Interrupt, // 中断类型
     cpu_cycle: u64, // CPU 周期
     instruction_info: InstructionInfo, // 当前指令信息
-    cpu_cycle_wait: u64,
+    pub cpu_cycle_wait: u64,
     cpu_ram: CpuRam, // CPU 内存
-    pub channels: CpuChannels,
+    // pub channels: CpuChannels,
     log: String,
+    bus: Arc<Mutex<Bus>>,
 }
 
 pub struct CpuChannels {
@@ -48,50 +52,50 @@ impl Default for Interrupt {
     }
 }
 
-pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>,pip_log_in:Sender<String>) {
-    let mut cpu = Cpu::new(cpu2mem_in,mem2cpu_out);
-    thread::spawn(move || {
-        loop {
-            let global_signal_out = global_signal_out.recv().unwrap();
-            match global_signal_out {
-                GlobalSignal::Clock => {
-                    // println!("接收到时钟信息");
-                    if cpu.cpu_cycle_wait == 0 {
-                        // println!("cpu开始执行指令");
-                        cpu.step();
-                        // let log = &cpu.log;
-                        // println!("{}",log);
-                        // println!("cpu开始执行完成");
-                    } else {
-                        // println!("cpu等待中，等待周期数：{}",cpu.cpu_cycle_wait);
-                        cpu.cpu_cycle_wait -= 1;
-                    }
-                },
-                GlobalSignal::Reset => {
-                    // println!("接收到复位信息，cpu开始执行复位");
-                    cpu.reset();
-                    // println!("cpu复位结束");
-                },
-                GlobalSignal::GetLog => {
-                    // println!("接收到获取日志信息，cpu开始执行获取日志");
-                    let log = cpu.get_current_log();
-                    pip_log_in.send(log).unwrap();
-                },
-                GlobalSignal::Step => {
-                    // println!("接收到cpu强制执行信息，cpu开始执行指令");
-                    cpu.step();
-                    // println!("cpu开始执行完成");
-                },
-            }
+// pub fn start_cpu_thread(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>,global_signal_out:Receiver<GlobalSignal>,pip_log_in:Sender<String>) {
+//     let mut cpu = Cpu::new(cpu2mem_in,mem2cpu_out);
+//     thread::spawn(move || {
+//         loop {
+//             let global_signal_out = global_signal_out.recv().unwrap();
+//             match global_signal_out {
+//                 GlobalSignal::Clock => {
+//                     // println!("接收到时钟信息");
+//                     if cpu.cpu_cycle_wait == 0 {
+//                         // println!("cpu开始执行指令");
+//                         cpu.step();
+//                         // let log = &cpu.log;
+//                         // println!("{}",log);
+//                         // println!("cpu开始执行完成");
+//                     } else {
+//                         // println!("cpu等待中，等待周期数：{}",cpu.cpu_cycle_wait);
+//                         cpu.cpu_cycle_wait -= 1;
+//                     }
+//                 },
+//                 GlobalSignal::Reset => {
+//                     // println!("接收到复位信息，cpu开始执行复位");
+//                     cpu.reset();
+//                     // println!("cpu复位结束");
+//                 },
+//                 GlobalSignal::GetLog => {
+//                     // println!("接收到获取日志信息，cpu开始执行获取日志");
+//                     let log = cpu.get_current_log();
+//                     pip_log_in.send(log).unwrap();
+//                 },
+//                 GlobalSignal::Step => {
+//                     // println!("接收到cpu强制执行信息，cpu开始执行指令");
+//                     cpu.step();
+//                     // println!("cpu开始执行完成");
+//                 },
+//             }
             
-        }
-    });
-}
+//         }
+//     });
+// }
 
 
 
 impl Cpu {
-    fn new(cpu2mem_in:Sender<RWMessage>,mem2cpu_out:Receiver<RWResult>) -> Self {
+    pub fn new(bus:Arc<Mutex<Bus>>) -> Self {
         Cpu {
             registers: Registers::default(),
             interrupt: Interrupt::default(),
@@ -99,18 +103,19 @@ impl Cpu {
             instruction_info: InstructionInfo::default(),
             cpu_cycle_wait: 0,
             cpu_ram: CpuRam::new(),
-            channels: CpuChannels{
-                cpu2mem_in,
-                mem2cpu_out,
-            },
+            // channels: CpuChannels{
+            //     cpu2mem_in,
+            //     mem2cpu_out,
+            // },
             log: String::new(),
+            bus,
         }
     }
     
     //https://www.nesdev.org/wiki/CPU_power_up_state ,待优化    
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.registers.sp = 0xFD; 
-        // self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
+        self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
@@ -127,9 +132,8 @@ impl Cpu {
             }
             _ => {
                 //高三位不为0:  其他设备
-                self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Read, address:address,value:None }).unwrap();
-                let read_result = self.channels.mem2cpu_out.recv().unwrap();
-                read_result.data.unwrap()
+                let read_result = self.bus.lock().unwrap().cpu_read(address);
+                read_result
             }
         }
     }
@@ -142,15 +146,14 @@ impl Cpu {
             }
             _ => {
                 //高三位不为0:  其他设备
-                self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::Write, address:address, value:Some(data) }).unwrap();
-                self.channels.mem2cpu_out.recv().unwrap();
+                let read_result = self.bus.lock().unwrap().cpu_write(address, data);
+                read_result
             }
         }
     }
 
     fn read_interrupt_status(&mut self) {
-        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::ReadInerruptStatus, address:0,value:None }).unwrap();
-        let interrupt_status = self.channels.mem2cpu_out.recv().unwrap().data.unwrap();
+        let interrupt_status = self.bus.lock().unwrap().interrupt_status;
         self.interrupt.irq = interrupt_status & 1 == 1;
         self.interrupt.nmi.0 = interrupt_status & 2 == 2;
         self.interrupt.reset = interrupt_status & 4 == 4;
@@ -161,8 +164,7 @@ impl Cpu {
         interrupt_status|=if self.interrupt.irq {1} else {0};
         interrupt_status|=if self.interrupt.nmi.0 {2} else {0};
         interrupt_status|=if self.interrupt.reset {4} else {0};
-        self.channels.cpu2mem_in.send(RWMessage {operate_type: RWType::WriteInerruptStatus, address:0,value:Some(interrupt_status) }).unwrap();
-        self.channels.mem2cpu_out.recv().unwrap();
+        self.bus.lock().unwrap().interrupt_status = interrupt_status;
     }
 
 

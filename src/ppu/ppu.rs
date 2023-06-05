@@ -1,9 +1,11 @@
 use std::thread;
-
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use crossbeam::channel::{Receiver, Sender};
 
 use crate::{
-    bus::{RWMessage, RWResult, RWType},
+    bus::{RWMessage, RWResult, RWType, Bus},
     utils::{Frame, GlobalSignal},
 };
 
@@ -46,12 +48,11 @@ pub struct SpriteEvaluationState {
 }
 
 pub struct PpuChannels {
-    ppu2bus_in: Sender<RWMessage>,
-    bus2ppu_out: Receiver<RWResult>,
     ppu_frame_out: Sender<Frame>,
 }
 
 pub struct Ppu {
+    bus : Arc<Mutex<Bus>>,
     // OAM (Object Attribute Memory) 用于存储精灵的属性。在 NES 中，它可以存储 64 个精灵的信息。
     oam: [u8; 0x100],
 
@@ -88,6 +89,7 @@ pub struct Ppu {
     nmi_status: bool, // nmi 状态
 
     frame_color_index_cache: [u8; 256 * 240],
+    channels: PpuChannels,
     // // 当前扫描线是否在水平空白期。水平空白期是每一条扫描线渲染结束后的一个时间段，这个时期内 PPU 不会渲染任何东西，但可以进行 VRAM 的读写。
     // in_hblank: bool,
 
@@ -135,46 +137,46 @@ pub struct Ppu {
     // // PPU 的命中和溢出状态
     // sprite_zero_hit: bool,
     // sprite_overflow: bool,
-    channels: PpuChannels,
+    // channels: PpuChannels,
 }
 
-pub fn start_ppu_thread(
-    ppu2bus_in: Sender<RWMessage>,
-    bus2ppu_out: Receiver<RWResult>,
-    ppu_frame_out: Sender<Frame>,
-    global_signal_out: Receiver<GlobalSignal>,
-    pip_log_in: Sender<String>,
-) {
-    let mut ppu = Ppu::new(ppu2bus_in, bus2ppu_out, ppu_frame_out);
-    thread::spawn(move || loop {
-        let global_signal_out = global_signal_out.recv().unwrap();
-        match global_signal_out {
-            GlobalSignal::Reset => {
-                ppu.reset();
-            }
-            GlobalSignal::Clock => {
-                for _ in 0..3 {
-                    ppu.step();
-                }
-            }
-            GlobalSignal::GetLog => {
-                let log = ppu.get_current_log();
-                // pip_log_in.send(log).unwrap();
-            }
-            GlobalSignal::Step => {
-                ppu.step();
-            }
-        }
-    });
-}
+// pub fn start_ppu_thread(
+//     ppu2bus_in: Sender<RWMessage>,
+//     bus2ppu_out: Receiver<RWResult>,
+//     ppu_frame_out: Sender<Frame>,
+//     global_signal_out: Receiver<GlobalSignal>,
+//     pip_log_in: Sender<String>,
+// ) {
+//     let mut ppu = Ppu::new(ppu2bus_in, bus2ppu_out, ppu_frame_out);
+//     thread::spawn(move || loop {
+//         let global_signal_out = global_signal_out.recv().unwrap();
+//         match global_signal_out {
+//             GlobalSignal::Reset => {
+//                 ppu.reset();
+//             }
+//             GlobalSignal::Clock => {
+//                 for _ in 0..3 {
+//                     ppu.step();
+//                 }
+//             }
+//             GlobalSignal::GetLog => {
+//                 let log = ppu.get_current_log();
+//                 // pip_log_in.send(log).unwrap();
+//             }
+//             GlobalSignal::Step => {
+//                 ppu.step();
+//             }
+//         }
+//     });
+// }
 
 impl Ppu {
     pub fn new(
-        ppu2bus_in: Sender<RWMessage>,
-        bus2ppu_out: Receiver<RWResult>,
-        ppu_frame_out: Sender<Frame>,
+        bus: Arc<Mutex<Bus>>,
+        ppu_frame_out: Sender<Frame>  
     ) -> Self {
         Self {
+            bus,
             oam: [0; 0x100],
             cycles: 0,
             // registers: todo!(),
@@ -215,8 +217,6 @@ impl Ppu {
             frame_color_index_cache: [0; 256 * 240],
 
             channels: PpuChannels {
-                ppu2bus_in,
-                bus2ppu_out,
                 ppu_frame_out,
             },
             ppustatus: 0,
@@ -225,53 +225,21 @@ impl Ppu {
     }
 
     fn read(&self, address: u16) -> u8 {
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::Read,
-                address,
-                value: None,
-            })
-            .unwrap();
-        let read_result = self.channels.bus2ppu_out.recv().unwrap();
-        read_result.data.unwrap()
+        let read_result = self.bus.lock().unwrap().ppu_read(address);
+        read_result
+
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::Write,
-                address: address,
-                value: Some(data),
-            })
-            .unwrap();
-        let write_result = self.channels.bus2ppu_out.recv().unwrap();
+        self.bus.lock().unwrap().ppu_write(address, data);
     }
 
     fn read_reg(&self, reg: PpuRegister) -> u8 {
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::ReadReg,
-                address: 0x2000 + (reg as u16),
-                value: None,
-            })
-            .unwrap();
-        let read_result = self.channels.bus2ppu_out.recv().unwrap();
-        read_result.data.unwrap()
+        self.bus.lock().unwrap().cpu_read(0x2000 + (reg as u16))
     }
 
     fn write_reg(&self, reg: PpuRegister, data: u8) {
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::WriteReg,
-                address: 0x2000 + (reg as u16),
-                value: Some(data),
-            })
-            .unwrap();
-        let write_result = self.channels.bus2ppu_out.recv().unwrap();
+        self.bus.lock().unwrap().cpu_write( 0x2000 + (reg as u16), data)
     }
 
     pub fn reset(&mut self) {
@@ -405,6 +373,8 @@ impl Ppu {
             let palette_address = 0x3f00 + palette_index as u16 * 4;
             let tile_data_address = pattern_table_base + tile_index as u16 * 16;
             // 获取tile数据
+            // let tail_data_color_index = self.read_tail_data(tile_data_address);
+
             for y in 0..8 {
                 let tail_data_low = self.read(tile_data_address+y);
                 let tail_data_high = self.read(tile_data_address+y + 8);
@@ -433,30 +403,13 @@ impl Ppu {
     }
 
     fn set_nmi(&mut self, nmi: bool) { // todo： 优化，ppu只能设置nmi，不需要读取其他的
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::ReadInerruptStatus,
-                address: 0,
-                value: None,
-            })
-            .unwrap();
-        let mut interrupt_status = self.channels.bus2ppu_out.recv().unwrap().data.unwrap();
         // nmi 位在第2位
-        interrupt_status = if nmi {
+        let interrupt_status = self.bus.lock().unwrap().interrupt_status;
+        self.bus.lock().unwrap().interrupt_status = if nmi {
             interrupt_status | 0b00000010
         } else {
             interrupt_status & 0b11111101
         };
-        self.channels
-            .ppu2bus_in
-            .send(RWMessage {
-                operate_type: RWType::WriteInerruptStatus,
-                address: 0,
-                value: Some(interrupt_status),
-            })
-            .unwrap();
-        self.channels.bus2ppu_out.recv().unwrap();
     }
 
     pub fn step(&mut self) {

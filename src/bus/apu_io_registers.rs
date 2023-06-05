@@ -13,7 +13,7 @@ pub struct ApuIoRegisters{
 impl ApuIoRegisters {
     pub fn new() -> Self {
         ApuIoRegisters {
-            ram: [0xFF; 0x20],
+            ram: [0; 0x20],
             current_input: VecDeque::new(),
             input_enable: false,
         }
@@ -50,7 +50,7 @@ impl ApuIoRegisters {
     }
 
     pub fn reset(&mut self) {
-        self.ram = [0xFF; 0x20];
+        self.ram = [0; 0x20];
         self.current_input =  VecDeque::new();
         self.input_enable = false;
     }

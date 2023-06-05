@@ -11,7 +11,7 @@ pub mod opcodes;
 mod cpu_ram;
 
 // 重新导出子模块中的结构体和类型，以便在模拟器的其他部分中使用
-pub use cpu::{Cpu,start_cpu_thread};
+pub use cpu::{Cpu};
 pub use instructions::Instruction;
 pub use addressing_modes::AddressingMode;
 pub use registers::Registers;

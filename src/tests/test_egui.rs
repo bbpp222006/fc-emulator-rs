@@ -43,7 +43,7 @@ pub fn run_test() {
     eframe::run_native(
         "Show an image with eframe/egui",
         options,
-        Box::new(|cc| Box::new(MyApp::new(pip_frame_data.1,pip_input_stream.0))),
+        Box::new(|cc| Box::new(MyApp::new(pip_frame_data.1,pip_input_stream.0,60.0))),
     )
     .unwrap(); 
 }
