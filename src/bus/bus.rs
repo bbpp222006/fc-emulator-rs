@@ -5,7 +5,7 @@ use egui::Key;
 use crate::mapper::{Mapper, create_mapper};
 use crate::bus::{vram,registers,palettes,apu_io_registers};
 
-use super::cpu_ram;
+use super::{cpu_ram, oam};
 
 pub struct RWMessage {
     pub operate_type: RWType,
@@ -36,6 +36,7 @@ pub struct Bus {
     registers: registers::Registers,
     vram: vram::Vram,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
+    pub oam: oam::Oam,
     palettes: palettes::Palettes,
     apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
@@ -51,6 +52,7 @@ impl Bus {
             registers: registers::Registers::new(),
             vram: vram::Vram::new(),
             vram_buffer: 0,
+            oam: oam::Oam::new(),
             palettes: palettes::Palettes::new(),
             apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
             mapper: default_mapper,
@@ -79,11 +81,8 @@ impl Bus {
                     }
                 }
                 self.apu_io_registers.current_input = current_input;
-            }
-            
-        }
-
-        
+            }   
+        }    
     }
 
     pub fn reset(&mut self) {
@@ -100,15 +99,21 @@ impl Bus {
 
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            // 0x0000..=0x1fff => {
-            //     // 系统主内存
-            //     self.cpu_ram.read(addr)
-            // }
+            0x0000..=0x1fff => {
+                // 系统主内存
+                self.cpu_ram.read(addr)
+            }
             0x2000..=0x3FFF => {
                 //高三位为1:  PPU 寄存器
                 let mut out_data = self.registers.read(addr);
                 // 一些附加影响
                 match 0x2000+(addr & 0x0007) as usize {
+                    0x2004 => {
+                        // 读取 OAMDATA 寄存器，进行 OAM 读
+                        out_data = self.oam.read(self.oam.oam_addr);
+                        // 读取 OAMDATA 寄存器后，地址会增加 1
+                        self.oam.oam_addr += 1;
+                    },
                     0x2007 => {
                         match self.vram.vram_addr {
                             0x2000..=0x3eff => {
@@ -130,8 +135,9 @@ impl Bus {
                 out_data
             }
             0x4000..=0x401F => {
-                //高三位为2:  APU 寄存器
-                self.apu_io_registers.read(addr)
+                //高三位为2:  APU ,io寄存器
+                let out_data = self.apu_io_registers.read(addr);
+                out_data
             }
             0x4020..=0x5FFF => {
                 //高三位为3:  扩展 ROM
@@ -151,16 +157,26 @@ impl Bus {
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
-            // 0x0000..=0x1fff => {
-            //     // 系统主内存
-            //     self.cpu_ram.write(addr, data);
-            // }
+            0x0000..=0x1fff => {
+                // 系统主内存
+                self.cpu_ram.write(addr, data);
+            }
             // 0x2000 - 0x3FFF: PPU 寄存器 (8 字节镜像，每 0x8 个地址有一个寄存器)
             0x2000..=0x3FFF => {
                 self.registers.write(addr, data);
 
                 // 一些附加影响
                 match 0x2000+(addr & 0x0007) as usize {
+                    0x2003 => {
+                        // 写入 OAMADDR 寄存器，更改 oam_addr
+                        self.oam.oam_addr = data as u16;
+                    },
+                    0x2004 => {
+                        // 写入 OAMDATA 寄存器，进行 OAM 写
+                        self.oam.write(self.oam.oam_addr, data);
+                        // OAM 地址自增
+                        self.oam.oam_addr+= 1;
+                    },
                     0x2006 => {
                         // 写入 PPUADDR 寄存器，更改vram_addr
                         self.vram.vram_addr= ((self.vram.vram_addr << 8) & 0xFF00) | (data as u16);
@@ -177,7 +193,20 @@ impl Bus {
             }
             // 0x4000 - 0x401F: APU 和 I/O 寄存器
             0x4000..=0x401F => {
-                self.apu_io_registers.write(addr, data)
+                match addr {
+                    0x4014 => {
+                        // 写入 OAMDMA 寄存器，进行 OAMDMA 操作
+                        let start_addr = (data as u16) << 8;
+                        for i in 0..0xff {
+                            let data = self.cpu_read(start_addr + i);
+                            self.oam.write(i, data);
+                        }
+                    },
+                    _ => {
+                        self.apu_io_registers.write(addr, data);
+                    },
+                }
+                
             }
             0x4020..=0x5FFF => {
                 //高三位为3:  扩展 ROM

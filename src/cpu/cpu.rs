@@ -14,7 +14,7 @@ use std::{thread, vec};
 use std::sync::{Arc, Mutex};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 
-use super::cpu_ram::CpuRam;
+// use super::cpu_ram::CpuRam;
 use super::instructions::InstructionInfo;
 
 
@@ -25,7 +25,7 @@ pub struct Cpu {
     cpu_cycle: u64, // CPU 周期
     instruction_info: InstructionInfo, // 当前指令信息
     pub cpu_cycle_wait: u64,
-    cpu_ram: CpuRam, // CPU 内存
+    // cpu_ram: CpuRam, // CPU 内存
     // pub channels: CpuChannels,
     log: String,
     bus: Arc<Mutex<Bus>>,
@@ -102,7 +102,7 @@ impl Cpu {
             cpu_cycle: 0,
             instruction_info: InstructionInfo::default(),
             cpu_cycle_wait: 0,
-            cpu_ram: CpuRam::new(),
+            // cpu_ram: CpuRam::new(),
             // channels: CpuChannels{
             //     cpu2mem_in,
             //     mem2cpu_out,
@@ -121,34 +121,19 @@ impl Cpu {
         self.instruction_info=InstructionInfo::default();
         self.cpu_cycle_wait=0;
         self.log=String::new();
-        self.cpu_ram.reset();
+        // self.cpu_ram.reset();
     }
 
     fn read(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x1FFF => {
-                //高三位为0:  系统主内存
-                self.cpu_ram.read(address)
-            }
-            _ => {
-                //高三位不为0:  其他设备
-                let read_result = self.bus.lock().unwrap().cpu_read(address);
-                read_result
-            }
-        }
+        let read_result = self.bus.lock().unwrap().cpu_read(address);
+        
+        read_result
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        match address {
-            0x0000..=0x1FFF => {
-                //高三位为0:  系统主内存
-                self.cpu_ram.write(address,data);
-            }
-            _ => {
-                //高三位不为0:  其他设备
-                let read_result = self.bus.lock().unwrap().cpu_write(address, data);
-                read_result
-            }
+        self.bus.lock().unwrap().cpu_write(address, data);
+        if address == 0x4014 {
+            self.cpu_cycle+= if self.cpu_cycle&1==1{514}else{513};
         }
     }
 
@@ -206,63 +191,6 @@ impl Cpu {
         // 解码操作码为指令和寻址模式
         let opcode = self.read(self.registers.pc);
         self.instruction_info = decode_opcode(opcode);
-
-
-        // {
-        //     // 用于打印日志
-        //     use crate::cpu::instructions::Instruction::*;
-        //     let instruction_info = &self.instruction_info;
-        //     let address = self.registers.pc;
-        //     // 开始的地址
-        //     let mut output = format!("{:04X}  ", address); 
-        //     let operand_size = instruction_info.operand_size;
-
-        //     // opcode 和 根据寻址模式的接下来几位内存
-        //     output.push_str(&format!("{:02X} ", opcode));
-        //     let mut tmp=vec![];
-        //     for i in 1..=operand_size-1 {
-        //         let code = self.read(address + i as u16);
-        //         tmp.push(code);
-        //         output.push_str(&format!("{:02X} ", code));
-        //     }
-        //     //将tmp向量合并成u16
-        //     let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
-
-        //     output = format!("{: <15}", output);
-
-        //     // 如果opcode是拓展指令，则在前面加*
-        //     if instruction_info.unofficial {
-        //         output.push_str(&"*");
-        //     } else {
-        //         output.push_str(&" ");
-        //     }
-
-        //     // 具体指令
-        //     match  instruction_info.instruction {
-        //         DOP|TOP=>{
-        //             output.push_str(&format!("NOP "));
-        //         }
-        //         ISC=>{
-        //             output.push_str(&format!("ISB "));
-        //         }
-        //         _=>{
-        //             output.push_str(&format!("{:?} ", instruction_info.instruction));
-        //         }
-        //     }
-        //     self.log = format!(
-        //         "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3}, {:2} CYC:{}",
-        //         output,
-        //         self.registers.a,
-        //         self.registers.x,
-        //         self.registers.y,
-        //         self.registers.p,
-        //         self.registers.sp,
-        //         0,
-        //         0,
-        //         self.cpu_cycle,
-        //     );
-        // }
-
 
         let current_cyc = self.cpu_cycle;
         self.execute();  

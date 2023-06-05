@@ -11,7 +11,7 @@ use crate::emulator::Emulator;
 use crate::window::MyApp;
 
 pub fn run_test() {
-    let rom_path = "rom/nestest.nes";
+    let rom_path = "rom/color_test.nes";
     let mut emulator = Emulator::new();
     let pip_ppu_frameout = emulator.pip_ppu_frame.1.clone();
     let pip_input_stream_in = emulator.pip_input_stream.0.clone();

@@ -8,7 +8,7 @@ pub mod instructions;
 pub mod addressing_modes;
 pub mod registers;
 pub mod opcodes;
-mod cpu_ram;
+// mod cpu_ram;
 
 // 重新导出子模块中的结构体和类型，以便在模拟器的其他部分中使用
 pub use cpu::{Cpu};
