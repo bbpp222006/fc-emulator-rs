@@ -1,7 +1,10 @@
 pub mod mapper000;
+mod mapper003;
 
 use mapper000::NromMapper;
+use mapper003::Mapper003;
 
+#[derive(Debug)]
 pub struct RomHeader {
     pub prg_rom_size: usize,
     pub chr_rom_size: usize,
@@ -45,6 +48,7 @@ pub fn create_mapper(
 ) -> Box<dyn Mapper> {
 
     let rom_header = parse_rom_header(&rom_data);
+    println!("prg_rom_size:{}kb,chr_rom_size:{}kb",rom_header.prg_rom_size/1024,rom_header.chr_rom_size/1024);
 
     // 提取PRG-ROM和CHR-ROM数据
     let (prg_rom, chr_rom) = parse_prg_and_chr_rom_data(&rom_data);
@@ -54,6 +58,7 @@ pub fn create_mapper(
 
     match rom_header.mapper_number {
         0 => Box::new(NromMapper::new(prg_rom, chr_rom, rom_header.mirroring_type)),
+        3 => Box::new(Mapper003::new(prg_rom, chr_rom, rom_header.mirroring_type)),
         // 在这里添加其他 Mapper 的实现
         _ => panic!("Unsupported mapper ID: {}", rom_header.mapper_number),
     }
@@ -75,27 +80,21 @@ fn parse_interrupt_vectors(prg_rom: &Vec<u8>) -> InterruptVectors {
 }
 
 fn parse_prg_and_chr_rom_data(rom_data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    // 从ROM文件头部信息中提取PRG ROM和CHR ROM大小
-    let prg_rom_size = rom_data[4] as usize * 16 * 1024;
-    let chr_rom_size = rom_data[5] as usize * 8 * 1024;
+    let header_size = 16;
+    let prg_rom_size = rom_data[4] as usize * 16384; // PRG-ROM size is at offset 4
+    let chr_rom_size = rom_data[5] as usize * 8192; // CHR-ROM size is at offset 5
 
-    // 如果文件是NES 2.0格式，还需要考虑扩展字段中的额外数据
-    let byte9 = rom_data[9];
-    let prg_rom_size_upper = ((byte9 & 0x0F) as usize) << 8;
-    let chr_rom_size_upper = ((byte9 & 0xF0) as usize) << 4;
+    // Copy PRG-ROM data
+    let prg_rom_data = rom_data[header_size..header_size + prg_rom_size].to_vec();
 
-    let prg_rom_size = prg_rom_size + prg_rom_size_upper * 16 * 1024;
-    let chr_rom_size = chr_rom_size + chr_rom_size_upper * 8 * 1024;
+    // Handle CHR-ROM or CHR-RAM
+    let chr_rom_data = if chr_rom_size == 0 {
+        vec![0; 8192] // CHR-RAM size could be different, adjust accordingly
+    } else {
+        rom_data[header_size + prg_rom_size..header_size + prg_rom_size + chr_rom_size].to_vec()
+    };
 
-    // 从ROM文件中提取PRG ROM和CHR ROM数据
-    let prg_rom_start = 16; // NES 2.0 ROM文件头部信息占用16字节
-    let prg_rom_end = prg_rom_start + prg_rom_size;
-    let chr_rom_end = prg_rom_end + chr_rom_size;
-
-    let prg_rom = rom_data[prg_rom_start..prg_rom_end].to_vec();
-    let chr_rom = rom_data[prg_rom_end..chr_rom_end].to_vec();
-
-    (prg_rom, chr_rom)
+    (prg_rom_data, chr_rom_data)
 }
 
 pub fn parse_rom_header(rom_data: &[u8]) -> RomHeader {

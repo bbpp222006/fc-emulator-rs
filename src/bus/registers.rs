@@ -9,7 +9,7 @@ pub struct Registers {
     // | | +------------ 精灵大小(0 = 8x8 像素; 1 = 8x16 像素)
     // | +-------------- PPU 主从模式(0 = 读写; 1 = 仅读)，fc并没有使用
     // +---------------- NMI 使能(0 = 禁用; 1 = 启用)，vblank时触发nmi
-    ppuctrl: u8,
+    pub ppuctrl: u8,
 
     // PPUMASK 寄存器，用于控制 PPU 的一些行为。
     // 7 6 5 4 3 2 1 0
@@ -22,7 +22,7 @@ pub struct Registers {
     // | | +------------ 增强红颜色(0 = 禁用; 1 = 启用)，PAL为绿色
     // | +-------------- 增强绿颜色(0 = 禁用; 1 = 启用)，PAL为红色
     // +---------------- 增强蓝颜色(0 = 禁用; 1 = 启用)
-    ppumask: u8,
+    pub ppumask: u8,
 
     // PPUSTATUS 寄存器，用于存储 PPU 的一些状态。
     // 7 6 5 4 3 2 1 0
@@ -31,31 +31,31 @@ pub struct Registers {
     // | | +------------ 精灵溢出标志，当精灵数量超过8个时，该标志会被置位
     // | +-------------- 精灵0的碰撞标志，当精灵0与背景发生碰撞时，该标志会被置位，在预渲染期间被清除，用于光栅计时
     // +---------------- vblank标志，当ppu处于vblank时，该标志会被置位，结束或者读取该寄存器会清除该标志
-    ppustatus: u8,
+    pub ppustatus: u8,
 
     // OAMADDR 寄存器，用于存储 OAM 读写的地址。
     // 7 6 5 4 3 2 1 0
     // a a a a a a a a
     // + + + + + + + +-- OAM 地址
-    oamaddr: u8,
+    pub oamaddr: u8,
 
     // OAMDATA 寄存器，用于存储 OAM 读写的数据。
     // 7 6 5 4 3 2 1 0
     // d d d d d d d d
     // + + + + + + + +-- OAM 数据
-    oamdata: u8,
+    pub oamdata: u8,
 
     // PPUSCROLL 寄存器，用于存储 PPU 的滚动位置，写两次，第一次写入垂直滚动位置，第二次写入水平滚动位置。
-    ppuscroll: u8,
+    pub ppuscroll: u8,
 
     // PPUADDR 寄存器，用于存储 PPU 的写地址，写两次，第一次写入高字节6位，第二次写入低字节8位。
-    ppuaddr: u8,
+    pub ppuaddr: u8,
 
     // PPUDATA 寄存器，用于存储 PPU 的读写数据。读写后指针增长与ppuctrl的第2位有关，+1或者32
-    ppudata: u8, 
+    pub ppudata: u8, 
     
     // OAMDMA 寄存器，只写，DMA访问精灵ram
-    oamdma: u8,
+    pub oamdma: u8,
 }
 
 impl Registers {

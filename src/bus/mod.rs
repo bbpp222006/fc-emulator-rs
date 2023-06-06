@@ -1,5 +1,5 @@
 pub mod registers;
-pub mod vram;
+pub mod nametable;
 pub mod bus;
 mod palettes;
 mod apu_io_registers;

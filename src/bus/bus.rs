@@ -3,7 +3,7 @@ use std::{default, thread};
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use egui::Key;
 use crate::mapper::{Mapper, create_mapper};
-use crate::bus::{vram,registers,palettes,apu_io_registers};
+use crate::bus::{nametable,registers,palettes,apu_io_registers};
 
 use super::{cpu_ram, oam};
 
@@ -33,9 +33,10 @@ pub struct Bus {
     //   |||| ||+--- VBlank/NMI
     //   |||| |+---- Reset
     pub interrupt_status: u8, 
-    registers: registers::Registers,
-    vram: vram::Vram,
+    pub registers: registers::Registers,
+    nametable: nametable::Nametable,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
+    vram_addr: u16, // cpu通过PPUSCROLL/PPUADDR 读写VRAM时，需要一个addr
     pub oam: oam::Oam,
     palettes: palettes::Palettes,
     apu_io_registers: apu_io_registers::ApuIoRegisters,
@@ -50,8 +51,9 @@ impl Bus {
         Bus {
             interrupt_status: 0b0000_0000,
             registers: registers::Registers::new(),
-            vram: vram::Vram::new(),
+            nametable: nametable::Nametable::new(),
             vram_buffer: 0,
+            vram_addr: 0,
             oam: oam::Oam::new(),
             palettes: palettes::Palettes::new(),
             apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
@@ -88,7 +90,9 @@ impl Bus {
     pub fn reset(&mut self) {
         // self.palettes.reset();
         self.registers.reset();
-        self.vram.reset();
+        self.nametable.reset();
+        self.oam.reset();
+        self.vram_addr = 0;
         self.apu_io_registers.reset(); // debug
         self.cpu_ram.reset(); // debug
     }
@@ -115,20 +119,30 @@ impl Bus {
                         self.oam.oam_addr += 1;
                     },
                     0x2007 => {
-                        match self.vram.vram_addr {
-                            0x2000..=0x3eff => {
+                        // 读取 PPUDATA 寄存器，进行 VRAM 读
+                        match self.vram_addr {
+                            0x0..=0x3eff => {
                                 out_data = self.vram_buffer;
-                                // 读取 PPUDATA 寄存器，进行 VRAM 读
-                                self.vram_buffer = self.vram.read(self.vram.vram_addr);
+                                match self.vram_addr {
+                                    0x0 ..= 0x1fff => {
+                                        // chr rom
+                                        self.vram_buffer = self.mapper.read_chr_rom(self.vram_addr);
+                                    }
+                                    0x2000..=0x3eff => {
+                                        // nametable
+                                        self.vram_buffer = self.nametable.read(self.vram_addr);
+                                    }
+                                    _ => (),
+                                }
                             }
                             0x3f00..=0x3fff => {
-                                // 读取 PPUDATA 寄存器，进行调色板读
-                                out_data = self.palettes.read(self.vram.vram_addr);
+                                // 调色板,无缓冲
+                                out_data = self.palettes.read(self.vram_addr);
                             }
                             _ => (),
                         }
                         // 读取 PPUDATA 寄存器后，地址会增加 1 或 32，取决于 PPUCTRL 寄存器的第 2 位
-                        self.vram.vram_addr+= if self.registers.read(0x2000) & 0b0000_0100 != 0 { 32 } else { 1 };
+                        self.vram_addr+= if self.registers.read(0x2000) & 0b0000_0100 != 0 { 32 } else { 1 };
                     },
                     _ => (),
                 }
@@ -179,14 +193,33 @@ impl Bus {
                     },
                     0x2006 => {
                         // 写入 PPUADDR 寄存器，更改vram_addr
-                        self.vram.vram_addr= ((self.vram.vram_addr << 8) & 0xFF00) | (data as u16);
+                        self.vram_addr= ((self.vram_addr << 8) & 0xFF00) | (data as u16);
                     },
                     0x2007 => {
                         // 写入 PPUDATA 寄存器，进行 VRAM 写
-                        self.vram.write(self.vram.vram_addr, data);
+                        match self.vram_addr {
+                            0x0..=0x3eff => {
+                                match self.vram_addr {
+                                    0x0 ..= 0x1fff => {
+                                        // chr rom
+                                        self.mapper.write_chr_rom(self.vram_addr, data);
+                                    }
+                                    0x2000..=0x3eff => {
+                                        // nametable
+                                        self.nametable.write(self.vram_addr, data);
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            0x3f00..=0x3fff => {
+                                // 调色板,无缓冲
+                                self.palettes.write(self.vram_addr, data);
+                            }
+                            _ => (),
+                        }
                         // VRAM 地址自增
-                        self.vram.vram_addr+= if self.registers.read(0x2000) & 0b0000_0100 != 0 { 32 } else { 1 };
-                        // println!("{}", format!("write vram: {:04X} {:02X}", self.vram.vram_addr, data));
+                        self.vram_addr+= if self.registers.read(0x2000) & 0b0000_0100 != 0 { 32 } else { 1 };
+                        // println!("{}", format!("write vram: {:04X} {:02X}", self.vram_addr, data));
                     },
                     _ => (),
                 }
@@ -232,9 +265,13 @@ impl Bus {
                 let a = self.mapper.read_chr_rom(addr);
                 a
             }
-            0x2000..=0x3FFF => {
-                // nametable,attribute table,palette table 都在这里
-                self.vram.read(addr)
+            0x2000..=0x3EFF => {
+                // nametable,attribute table
+                self.nametable.read(addr)
+            }
+            0x3F00..=0x3FFF => {
+                // 调色板
+                self.palettes.read(addr)
             }
             _ => 0, // 不可能的地址范围
         }
@@ -246,9 +283,13 @@ impl Bus {
                 // pattern table
                 self.mapper.write_chr_rom(addr, data);
             }
-            0x2000..=0x3FFF => {
+            0x2000..=0x3EFF => {
                 // nametable,attribute table 都在这里
-                self.vram.write(addr, data);
+                self.nametable.write(addr, data);
+            }
+            0x3F00..=0x3FFF => {
+                // 调色板
+                self.palettes.write(addr, data);
             }
             _ => {} // 不可能的地址范围
         }

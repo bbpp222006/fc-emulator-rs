@@ -498,8 +498,8 @@ impl Ppu {
             self.dot = 0;
             self.scanline += 1;
             if self.scanline == 241 {
-                self.ppustatus |= 0x80;
-                self.write_reg(PpuRegister::PpuStatus, self.ppustatus);
+                // 开始vbalnk
+                self.bus.lock().unwrap().registers.ppustatus |= 0x80;
                 self.test_render_background();
                 self.test_render_sprite();
                 self.channels
@@ -513,16 +513,13 @@ impl Ppu {
             }
             if self.scanline > 241 && self.scanline < 261 {
                 // vblank期间，如果设置了nmi，那么就触发nmi
-                let ppuctrl = self.read_reg(PpuRegister::PpuCtrl);
-                if (self.ppustatus & 0x80 == 0x80) && (ppuctrl & 0x80 == 0x80) {
+                if (self.bus.lock().unwrap().registers.ppustatus & 0x80 == 0x80) && (self.bus.lock().unwrap().registers.ppuctrl & 0x80 == 0x80) {
                     if self.nmi_status != true {
                         self.set_nmi(true);
-                        self.nmi_status = true;
                     }
                 } else {
                     if self.nmi_status != false {
                         self.set_nmi(false);
-                        self.nmi_status = false;
                     }
                     // self.set_nmi(false);
                 }
@@ -531,10 +528,8 @@ impl Ppu {
             if self.scanline > 261 {
                 if self.nmi_status != false {
                     self.set_nmi(false);
-                    self.nmi_status = false;
                 }
-                self.ppustatus &= 0x7f;
-                self.write_reg(PpuRegister::PpuStatus, self.ppustatus);
+                self.bus.lock().unwrap().registers.ppustatus &= 0x7f;
                 self.scanline = 0;
             }
         }
