@@ -20,15 +20,15 @@ use super::instructions::InstructionInfo;
 
 /// 6502 CPU 的结构体
 pub struct Cpu {
-    registers: Registers, // CPU 寄存器
+    pub registers: Registers, // CPU 寄存器
     interrupt: Interrupt, // 中断类型
-    cpu_cycle: u64, // CPU 周期
-    instruction_info: InstructionInfo, // 当前指令信息
+    pub cpu_cycle: u64, // CPU 周期
+    pub instruction_info: InstructionInfo, // 当前指令信息
     pub cpu_cycle_wait: u64,
     // cpu_ram: CpuRam, // CPU 内存
     // pub channels: CpuChannels,
     log: String,
-    bus: Arc<Mutex<Bus>>,
+    bus: Rc<RefCell<Bus>>,
 }
 
 pub struct CpuChannels {
@@ -95,7 +95,7 @@ impl Default for Interrupt {
 
 
 impl Cpu {
-    pub fn new(bus:Arc<Mutex<Bus>>) -> Self {
+    pub fn new(bus:Rc<RefCell<Bus>>) -> Self {
         Cpu {
             registers: Registers::default(),
             interrupt: Interrupt::default(),
@@ -119,26 +119,24 @@ impl Cpu {
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
         self.instruction_info=InstructionInfo::default();
-        self.cpu_cycle_wait=0;
         self.log=String::new();
         // self.cpu_ram.reset();
     }
 
     fn read(&self, address: u16) -> u8 {
-        let read_result = self.bus.lock().unwrap().cpu_read(address);
-        
+        let read_result = self.bus.borrow_mut().cpu_read(address);
         read_result
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        self.bus.lock().unwrap().cpu_write(address, data);
+        self.bus.borrow_mut().cpu_write(address, data);
         if address == 0x4014 {
             self.cpu_cycle+= if self.cpu_cycle&1==1{514}else{513};
         }
     }
 
     fn read_interrupt_status(&mut self) {
-        let interrupt_status = self.bus.lock().unwrap().interrupt_status;
+        let interrupt_status = self.bus.borrow_mut().interrupt_status;
         self.interrupt.irq = interrupt_status & 1 == 1;
         self.interrupt.nmi.0 = interrupt_status & 2 == 2;
         self.interrupt.reset = interrupt_status & 4 == 4;
@@ -149,7 +147,7 @@ impl Cpu {
         interrupt_status|=if self.interrupt.irq {1} else {0};
         interrupt_status|=if self.interrupt.nmi.0 {2} else {0};
         interrupt_status|=if self.interrupt.reset {4} else {0};
-        self.bus.lock().unwrap().interrupt_status = interrupt_status;
+        self.bus.borrow_mut().interrupt_status = interrupt_status;
     }
 
 
@@ -200,25 +198,170 @@ impl Cpu {
         // 反汇编当前结果
     pub fn get_current_log(&self) -> String{
         format!(
-            "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3}, {:2} CYC:{}",
+            "{: <48}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
             self.disassemble_instruction(self.registers.pc),
             self.registers.a,
             self.registers.x,
             self.registers.y,
             self.registers.p,
             self.registers.sp,
-            0,
-            0,
-            self.cpu_cycle,
         )
+    } 
+
+    // 静态反汇编用
+    fn read_debug(&self, address: u16) -> u8 {
+        let read_result = self.bus.borrow_mut().cpu_read_debug(address);
+        read_result
     }
 
+    fn read_u16_z_debug(&self, address:u8 ) -> u16 {
+        let low_byte = self.read_debug(address as u16) as u16;
+        let high_byte = self.read_debug(address.wrapping_add(1) as u16) as u16;
+        (high_byte << 8) | low_byte
+    }
+
+    pub fn disassemble_instruction_short(&self) -> String {
+        use crate::cpu::instructions::Instruction::*;
+        let address = self.registers.pc;
+        let opcode = self.read_debug(address);
+        let instruction_info = decode_opcode(opcode);
+
+        // 开始的地址
+        let mut output = "".to_string(); 
+        let operand_size = instruction_info.operand_size;
+
+        // opcode 和 根据寻址模式的接下来几位内存
+        let mut tmp=vec![];
+        for i in 1..=operand_size-1 {
+            let code = self.read_debug(address + i as u16);
+            tmp.push(code);
+        }
+        //将tmp向量合并成u16
+        let tmp =tmp.iter().rev().fold(0, |acc, &x| (acc << 8) | x as u16);
+
+        // 如果opcode是拓展指令，则在前面加*
+        if instruction_info.unofficial {
+            output.push_str(&"*");
+        } else {
+            output.push_str(&" ");
+        }
+
+        // 具体指令
+        match  instruction_info.instruction {
+            DOP|TOP=>{
+                output.push_str(&format!("NOP "));
+            }
+            ISC=>{
+                output.push_str(&format!("ISB "));
+            }
+            _=>{
+                output.push_str(&format!("{:?} ", instruction_info.instruction));
+            }
+        }
+        
+
+        // 指令运行细节
+       
+        match instruction_info.instruction {
+            //所有的流程指令
+            JMP|JSR|BEQ|BNE|BCS|BCC|BMI|BPL|BVS|BVC|RTS|RTI|BRK => {
+                match instruction_info.addressing_mode {
+                    AddressingMode::Implied => (),
+                    AddressingMode::Absolute => {
+                        let operand = tmp;
+                        output.push_str(&format!("${:04X}", operand));
+                    }
+                    AddressingMode::Indirect => {
+                        let operand_address_address = tmp;
+                        let low_byte = self.read_debug(operand_address_address);
+                        let high_byte = if operand_address_address & 0x00FF == 0x00FF {
+                            self.read_debug(operand_address_address & 0xFF00)
+                        } else {
+                            self.read_debug(operand_address_address + 1)
+                        };
+                        let operand_address = (high_byte as u16) << 8 | low_byte as u16;
+                        output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
+                    }
+                    AddressingMode::Relative => {
+                        let init_offset = tmp as u8;
+                        let offset = init_offset as i8; // 读取当前地址的值作为偏移量（有符号数）
+                        let operand_address = ((address+1) as i32 + 1 + (offset as i32)) as u16;
+                        output.push_str(&format!("${:04X}", operand_address));
+                    }
+                    _ => panic!("当前指令:{:?} 不存在寻址模式{:?}", instruction_info.instruction, instruction_info.addressing_mode),
+                }
+            }
+            // 所有非跳转指令
+            _ => {
+                match instruction_info.addressing_mode {
+                    AddressingMode::Implied => (),
+                    AddressingMode::Accumulator => output.push_str("A"),
+                    AddressingMode::Immediate => {
+                        let operand = tmp;
+                        output.push_str(&format!("#${:02X}", operand));
+                    }
+                    AddressingMode::ZeroPage => {
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X} = {:02X}", operand_address, self.read_debug(operand_address)));
+                    }
+                    AddressingMode::ZeroPageX => {
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X},X @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.x as u16) & 0xFF, self.read_debug((operand_address + self.registers.x as u16) & 0xFF)));
+                    }
+                    AddressingMode::ZeroPageY => {
+                        let operand_address = tmp;
+                        output.push_str(&format!("${:02X},Y @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.y as u16) & 0xFF, self.read_debug((operand_address + self.registers.y as u16) & 0xFF)));
+                    }
+                    AddressingMode::Absolute => {
+                        let operand = tmp;
+                        output.push_str(&format!("${:04X} = {:02X}", operand, self.read_debug(operand)));
+                    }
+                    AddressingMode::AbsoluteX => {
+                        let operand = tmp;
+                        output.push_str(&format!("${:04X},X @ {:04X} = {:02X}", operand, operand + self.registers.x as u16, self.read_debug(operand + self.registers.x as u16)));
+                    }
+                    AddressingMode::AbsoluteY => {
+                        let base_address = tmp;
+                        let operand_address = base_address.wrapping_add(self.registers.y as u16);
+                        let operand = self.read_debug(operand_address);
+                        output.push_str(&format!("${:04X},Y @ {:04X} = {:02X}", base_address, operand_address, operand));
+                    }
+                    AddressingMode::Indirect => {
+                        let operand_address_address = tmp as u16;
+                        let low_byte = self.read_debug(operand_address_address);
+                        let high_byte = if operand_address_address & 0x00FF == 0x00FF {
+                            self.read_debug(operand_address_address & 0xFF00)
+                        } else {
+                            self.read_debug(operand_address_address + 1)
+                        };
+                        let operand_address = (high_byte as u16) << 8 | low_byte as u16;
+                        output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
+                    }
+                    AddressingMode::IndirectX => {
+                        let base_address = tmp as u8;
+                        let operand_address = self.read_u16_z_debug(base_address.wrapping_add(self.registers.x));
+                        let operand = self.read_debug(operand_address);
+                        output.push_str(&format!("(${:02X},X) @ {:02X} = {:04X} = {:02X}", base_address, (base_address as u16 + self.registers.x as u16) & 0xFF, operand_address, operand));
+                    }
+                    AddressingMode::IndirectY => {
+                        let base_address_address = tmp as u8;
+                        let base_address = self.read_u16_z_debug(base_address_address);
+                        let operand_address = base_address.wrapping_add(self.registers.y as u16) ;
+                        let operand = self.read_debug(operand_address);
+                        output.push_str(&format!("(${:02X}),Y = {:04X} @ {:04X} = {:02X}", base_address_address, base_address, operand_address, operand));
+                    }
+                    _ => panic!("当前指令:{:?} 不存在寻址模式{:?}", instruction_info.instruction, instruction_info.addressing_mode),
+                }
+            }
+        }        
+        output 
+    }
 
     /// 反汇编指定地址处的指令，返回反汇编结果
     pub fn disassemble_instruction(&self, address: u16) -> String {
         use crate::cpu::instructions::Instruction::*;
 
-        let opcode = self.read(address);
+        let opcode = self.read_debug(address);
         let instruction_info = decode_opcode(opcode);
 
         // 开始的地址
@@ -229,7 +372,7 @@ impl Cpu {
         output.push_str(&format!("{:02X} ", opcode));
         let mut tmp=vec![];
         for i in 1..=operand_size-1 {
-            let code = self.read(address + i as u16);
+            let code = self.read_debug(address + i as u16);
             tmp.push(code);
             output.push_str(&format!("{:02X} ", code));
         }
@@ -272,11 +415,11 @@ impl Cpu {
                     }
                     AddressingMode::Indirect => {
                         let operand_address_address = tmp;
-                        let low_byte = self.read(operand_address_address);
+                        let low_byte = self.read_debug(operand_address_address);
                         let high_byte = if operand_address_address & 0x00FF == 0x00FF {
-                            self.read(operand_address_address & 0xFF00)
+                            self.read_debug(operand_address_address & 0xFF00)
                         } else {
-                            self.read(operand_address_address + 1)
+                            self.read_debug(operand_address_address + 1)
                         };
                         let operand_address = (high_byte as u16) << 8 | low_byte as u16;
                         output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
@@ -301,52 +444,52 @@ impl Cpu {
                     }
                     AddressingMode::ZeroPage => {
                         let operand_address = tmp;
-                        output.push_str(&format!("${:02X} = {:02X}", operand_address, self.read(operand_address)));
+                        output.push_str(&format!("${:02X} = {:02X}", operand_address, self.read_debug(operand_address)));
                     }
                     AddressingMode::ZeroPageX => {
                         let operand_address = tmp;
-                        output.push_str(&format!("${:02X},X @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.x as u16) & 0xFF, self.read((operand_address + self.registers.x as u16) & 0xFF)));
+                        output.push_str(&format!("${:02X},X @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.x as u16) & 0xFF, self.read_debug((operand_address + self.registers.x as u16) & 0xFF)));
                     }
                     AddressingMode::ZeroPageY => {
                         let operand_address = tmp;
-                        output.push_str(&format!("${:02X},Y @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.y as u16) & 0xFF, self.read((operand_address + self.registers.y as u16) & 0xFF)));
+                        output.push_str(&format!("${:02X},Y @ {:02X} = {:02X}", operand_address, (operand_address + self.registers.y as u16) & 0xFF, self.read_debug((operand_address + self.registers.y as u16) & 0xFF)));
                     }
                     AddressingMode::Absolute => {
                         let operand = tmp;
-                        output.push_str(&format!("${:04X} = {:02X}", operand, self.read(operand)));
+                        output.push_str(&format!("${:04X} = {:02X}", operand, self.read_debug(operand)));
                     }
                     AddressingMode::AbsoluteX => {
                         let operand = tmp;
-                        output.push_str(&format!("${:04X},X @ {:04X} = {:02X}", operand, operand + self.registers.x as u16, self.read(operand + self.registers.x as u16)));
+                        output.push_str(&format!("${:04X},X @ {:04X} = {:02X}", operand, operand + self.registers.x as u16, self.read_debug(operand + self.registers.x as u16)));
                     }
                     AddressingMode::AbsoluteY => {
                         let base_address = tmp;
                         let operand_address = base_address.wrapping_add(self.registers.y as u16);
-                        let operand = self.read(operand_address);
+                        let operand = self.read_debug(operand_address);
                         output.push_str(&format!("${:04X},Y @ {:04X} = {:02X}", base_address, operand_address, operand));
                     }
                     AddressingMode::Indirect => {
                         let operand_address_address = tmp as u16;
-                        let low_byte = self.read(operand_address_address);
+                        let low_byte = self.read_debug(operand_address_address);
                         let high_byte = if operand_address_address & 0x00FF == 0x00FF {
-                            self.read(operand_address_address & 0xFF00)
+                            self.read_debug(operand_address_address & 0xFF00)
                         } else {
-                            self.read(operand_address_address + 1)
+                            self.read_debug(operand_address_address + 1)
                         };
                         let operand_address = (high_byte as u16) << 8 | low_byte as u16;
                         output.push_str(&format!("(${:04X}) = {:04X}", operand_address_address, operand_address));
                     }
                     AddressingMode::IndirectX => {
                         let base_address = tmp as u8;
-                        let operand_address = self.read_u16_z(base_address.wrapping_add(self.registers.x));
-                        let operand = self.read(operand_address);
+                        let operand_address = self.read_u16_z_debug(base_address.wrapping_add(self.registers.x));
+                        let operand = self.read_debug(operand_address);
                         output.push_str(&format!("(${:02X},X) @ {:02X} = {:04X} = {:02X}", base_address, (base_address as u16 + self.registers.x as u16) & 0xFF, operand_address, operand));
                     }
                     AddressingMode::IndirectY => {
                         let base_address_address = tmp as u8;
-                        let base_address = self.read_u16_z(base_address_address);
+                        let base_address = self.read_u16_z_debug(base_address_address);
                         let operand_address = base_address.wrapping_add(self.registers.y as u16) ;
-                        let operand = self.read(operand_address);
+                        let operand = self.read_debug(operand_address);
                         output.push_str(&format!("(${:02X}),Y = {:04X} @ {:04X} = {:02X}", base_address_address, base_address, operand_address, operand));
                     }
                     _ => panic!("当前指令:{:?} 不存在寻址模式{:?}", instruction_info.instruction, instruction_info.addressing_mode),
@@ -504,6 +647,7 @@ impl Cpu {
             Instruction::SRE => self.sre(),
             Instruction::RRA => self.rra(),
             Instruction::BRK => self.brk(),
+            Instruction::CLI => self.cli(),
             // ... 处理其他指令
             _ => panic!("{:?}指令暂未实现",self.instruction_info.instruction), // 如果尚未实现的指令，触发未实现错误
         }
@@ -1547,6 +1691,12 @@ impl Cpu {
         self.registers.set_flag(StatusFlags::BreakCommand, true);
         self.registers.pc = self.read_u16(0xFFFE);
         self.cpu_cycle+=7;
+    }
+
+    fn cli (&mut self){
+        self.registers.set_flag(StatusFlags::InterruptDisable, false);
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
     }
     // ... 实现其他指令
 }

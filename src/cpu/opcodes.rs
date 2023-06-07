@@ -2228,6 +2228,17 @@ pub fn decode_opcode(opcode: u8) -> InstructionInfo {
             instruction_type: Common,
         },
 
+        //cli
+        0x58 => InstructionInfo {
+            operand_code: opcode,
+            instruction: CLI,
+            addressing_mode: Implied,
+            operand_size:1,
+            instruction_cycle: 2,
+            unofficial: false,
+            instruction_type: Common,
+        },
+
         // ...其他操作码到指令的映射
         _ => panic!("当前操作码{:02X}不存在", opcode),
     }

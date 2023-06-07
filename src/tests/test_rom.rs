@@ -21,6 +21,9 @@ pub fn run_test() {
     let mut emulator =Emulator::new();
     // emulator.start();
     emulator.load_rom(rom_path);
+    emulator.cpu.registers.pc = 0xC000; // 测试时，从特定地址开始运行
+    emulator.bus.borrow_mut().apu_io_registers.ram = [0xff; 0x20];
+    emulator.bus.borrow_mut().apu_io_registers.input_history = 0xff; 
  
     let log_file = File::open(&Path::new(log_path)).expect("Unable to open log file");
 
@@ -29,18 +32,28 @@ pub fn run_test() {
         let expected_log_line = expected_log_line.unwrap();
         println!("{}", expected_log_line);
 
-        let emulator_log_line = emulator.get_log(); // 获取模拟器的日志
+        let mut emulator_log_line = emulator.get_log(); // 获取模拟器的日志
+
+        emulator_log_line.push_str(format!(" PPU:{:3},{:3} CYC:{}", emulator.ppu.scanline, emulator.ppu.dot, emulator.cpu.cpu_cycle).as_str());
         // println!("获取日志结束");
         println!("{}", emulator_log_line);
 
         assert!(
-            compare_logs(&emulator_log_line, &expected_log_line),
+            emulator_log_line==expected_log_line,
             "Emulator log: {}\nExpected log: {}",
             emulator_log_line,
             expected_log_line
         );
+
         
-        emulator.cpu.step(); // 在此处运行模拟器的单步执行功能
+        emulator.cpu.step();
+        while emulator.cpu.cpu_cycle_wait != 0 {
+            for _ in 0..3 {
+                emulator.ppu.step();
+            }
+            emulator.cpu.cpu_cycle_wait -= 1;
+        }
+
         current_num+=1;
         // println!("after 0x0400:{:02X}",emulator.cpu.memory.ram[0x0081]);
 

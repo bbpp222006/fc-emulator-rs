@@ -52,7 +52,7 @@ pub struct PpuChannels {
 }
 
 pub struct Ppu {
-    bus: Arc<Mutex<Bus>>,
+    bus: Rc<RefCell<Bus>>,
     // OAM (Object Attribute Memory) 用于存储精灵的属性。在 NES 中，它可以存储 64 个精灵的信息。
 
     // 现在获取的图块的数据。
@@ -62,16 +62,16 @@ pub struct Ppu {
     tile_shift_registers: [u16; 2],
 
     // 记录 PPU 当前经过的周期数。每个 PPU 周期，PPU 可能会进行一些工作，例如更新扫描线，读写内存等。
-    cycles: usize,
+    pub cycles: u64,
 
     // PPU 寄存器，用于存储 PPU 的状态，例如当前扫描线，滚动位置等。
     // registers: Registers,
 
     // 当前的扫描线位置，范围从 0 到 261，表示一帧中所有的扫描线（包括可见扫描线和垂直空白等）。
-    scanline: u16,
+    pub scanline: u16,
 
     // 当前在扫描线中的位置，范围从 0 到 340，表示一个扫描线中所有的像素点（包括可见像素和水平空白等）。
-    dot: u16,
+    pub dot: u16,
 
     // // 当前扫描线是否在渲染。虽然 PPU 在整个帧周期内都在运行，但只有在一部分时间内它才在屏幕上渲染像素（即所谓的 "可见扫描线" 时期）。
     // rendering_enabled: bool,
@@ -87,8 +87,10 @@ pub struct Ppu {
 
     nmi_status: bool, // nmi 状态
 
-    frame_color_index_cache: [u8; 256 * 240],
+    pub frame_color_index_cache: [u8; 256 * 240],
     channels: PpuChannels,
+
+    pub new_frame: bool,
     // // 当前扫描线是否在水平空白期。水平空白期是每一条扫描线渲染结束后的一个时间段，这个时期内 PPU 不会渲染任何东西，但可以进行 VRAM 的读写。
     // in_hblank: bool,
 
@@ -170,14 +172,14 @@ pub struct Ppu {
 // }
 
 impl Ppu {
-    pub fn new(bus: Arc<Mutex<Bus>>, ppu_frame_out: Sender<Frame>) -> Self {
+    pub fn new(bus: Rc<RefCell<Bus>>, ppu_frame_out: Sender<Frame>) -> Self {
         Self {
             bus,
             cycles: 0,
             // registers: todo!(),
             scanline: 0,
             dot: 0,
-
+            new_frame: false,
             // rendering_enabled: todo!(),
             // in_hblank: todo!(),
             // bg_pattern_table_address: todo!(),
@@ -218,37 +220,40 @@ impl Ppu {
     }
 
     fn read(&self, address: u16) -> u8 {
-        let read_result = self.bus.lock().unwrap().ppu_read(address);
+        let read_result = self.bus.borrow_mut().ppu_read(address);
         read_result
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        self.bus.lock().unwrap().ppu_write(address, data);
+        self.bus.borrow_mut().ppu_write(address, data);
     }
 
     fn read_oam(&self, address: u16) -> u8 {
-        let read_result = self.bus.lock().unwrap().oam.read(address);
+        let read_result = self.bus.borrow_mut().oam.read(address);
         read_result
     }
 
     fn read_reg(&self, reg: PpuRegister) -> u8 {
-        self.bus.lock().unwrap().cpu_read(0x2000 + (reg as u16))
+        self.bus.borrow_mut().cpu_read(0x2000 + (reg as u16))
     }
 
     fn write_reg(&self, reg: PpuRegister, data: u8) {
-        self.bus
-            .lock()
-            .unwrap()
+        self.bus.borrow_mut()
             .cpu_write(0x2000 + (reg as u16), data)
     }
 
     pub fn reset(&mut self) {
-        self.cycles = 0;
+        self.cycles = 7;
+        self.scanline = 0;
+        self.dot = 21;
         // ... reset other fields
     }
 
     pub fn get_current_log(&mut self) -> String {
-        "ppu 测试".to_string()
+        format!(
+            "PPU: cycles: {}, scanline: {}, dot: {}",
+            self.cycles, self.scanline, self.dot
+        )
     }
 
     fn start_of_scanline(&mut self) {
@@ -462,8 +467,8 @@ impl Ppu {
     fn set_nmi(&mut self, nmi: bool) {
         // todo： 优化，ppu只能设置nmi，不需要读取其他的
         // nmi 位在第2位
-        let interrupt_status = self.bus.lock().unwrap().interrupt_status;
-        self.bus.lock().unwrap().interrupt_status = if nmi {
+        let interrupt_status = self.bus.borrow_mut().interrupt_status;
+        self.bus.borrow_mut().interrupt_status = if nmi {
             interrupt_status | 0b00000010
         } else {
             interrupt_status & 0b11111101
@@ -499,37 +504,27 @@ impl Ppu {
             self.scanline += 1;
             if self.scanline == 241 {
                 // 开始vbalnk
-                self.bus.lock().unwrap().registers.ppustatus |= 0x80;
+                self.bus.borrow_mut().registers.ppustatus |= 0x80;
                 self.test_render_background();
                 self.test_render_sprite();
-                self.channels
-                    .ppu_frame_out
-                    .send(Frame {
-                        data: self.frame_color_index_cache.to_vec(),
-                        width: 256,
-                        height: 240,
-                    })
-                    .expect("send frame error");
+                self.new_frame = true;
             }
             if self.scanline > 241 && self.scanline < 261 {
                 // vblank期间，如果设置了nmi，那么就触发nmi
-                if (self.bus.lock().unwrap().registers.ppustatus & 0x80 == 0x80) && (self.bus.lock().unwrap().registers.ppuctrl & 0x80 == 0x80) {
-                    if self.nmi_status != true {
-                        self.set_nmi(true);
-                    }
+                let in_vblank = self.bus.borrow_mut().registers.ppustatus>>7 ==1;
+                let nmi_enabled =self.bus.borrow_mut().registers.ppuctrl>>7 ==1;
+                if in_vblank && nmi_enabled {
+                    self.bus.borrow_mut().interrupt_status|= 0b00000010;
                 } else {
-                    if self.nmi_status != false {
-                        self.set_nmi(false);
-                    }
+                    self.bus.borrow_mut().interrupt_status&= 0b11111101;
                     // self.set_nmi(false);
                 }
             }
 
             if self.scanline > 261 {
-                if self.nmi_status != false {
-                    self.set_nmi(false);
-                }
-                self.bus.lock().unwrap().registers.ppustatus &= 0x7f;
+                // vblank结束
+                self.bus.borrow_mut().registers.ppustatus &= 0x7f;
+                self.bus.borrow_mut().interrupt_status&= 0b11111101;
                 self.scanline = 0;
             }
         }

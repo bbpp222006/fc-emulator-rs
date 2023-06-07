@@ -32,7 +32,8 @@ pub struct Emulator {
     // pub window: Window,
     pub cpu: Cpu,
     pub ppu: Ppu,
-    pub bus: Arc<Mutex<Bus>>,
+    pub bus: Rc<RefCell<Bus>>,
+    log: String,
 }
 
 
@@ -49,9 +50,9 @@ impl Emulator {
         let pip_log = bounded(1);
         let pip_ppu_frame = bounded(1);
         let pip_input_stream: (Sender<HashSet<Key>>, Receiver<HashSet<Key>>) = bounded(5);
-        let bus: Arc<Mutex<Bus>>  = Arc::new(Mutex::new(Bus::new(pip_input_stream.1.clone())));
-        let cpu = Cpu::new(Arc::clone(&bus));
-        let ppu = Ppu::new(Arc::clone(&bus),pip_ppu_frame.0.clone());
+        let bus: Rc<RefCell<Bus>>  = Rc::new(RefCell::new(Bus::new(pip_input_stream.1.clone())));
+        let cpu = Cpu::new(Rc::clone(&bus));
+        let ppu = Ppu::new(Rc::clone(&bus),pip_ppu_frame.0.clone());
         Emulator {
             pip_cpu2bus,
             pip_bus2cpu,
@@ -66,7 +67,8 @@ impl Emulator {
             pip_input_stream,
             cpu,
             ppu,
-            bus
+            bus,
+            log: String::new(),
         }
     }
 
@@ -74,35 +76,48 @@ impl Emulator {
         let mut file = File::open(Path::new(path)).expect("无法打开 ROM 文件");
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).expect("无法读取 ROM 文件");
-        self.bus.lock().unwrap().load_rom(buffer);
+        self.bus.borrow_mut().load_rom(buffer);
         self.reset();
     }
 
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.reset();
-        self.bus.lock().unwrap().reset();
+        self.bus.borrow_mut().reset();
     }
 
+    
+
+    // pub fn ppu_clock(&mut self) {
+    //     self.ppu.step();
+    // }
+
     pub fn cpu_clock(&mut self) {
+        self.bus.borrow_mut().clock();
         if self.cpu.cpu_cycle_wait == 0 {
             self.cpu.step();
         } else {
             self.cpu.cpu_cycle_wait -= 1;
         }
+        for _ in 0..3 {
+            self.ppu.step();
+        }
     }
 
-    pub fn ppu_clock(&mut self) {
-        self.ppu.step();
+    pub fn cpu_step(&mut self) {
+        self.bus.borrow_mut().clock();
+        while self.cpu.cpu_cycle_wait != 0 {
+            for _ in 0..3 {
+                self.ppu.step();
+            }
+            self.cpu.cpu_cycle_wait -= 1;
+        }
+        self.cpu.step();
     }
     
-    // 单次时钟
-    pub fn clock(&mut self) {
-        self.bus.lock().unwrap().clock();
-        self.cpu_clock();
-        for _ in 0..3 {
-            self.ppu_clock();
-        }
+    pub fn ppu_step(&mut self) {
+        self.bus.borrow_mut().clock();
+        self.ppu.step();
     }
 
     pub fn get_log(&self) -> String {

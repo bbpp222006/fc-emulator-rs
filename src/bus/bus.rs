@@ -39,7 +39,7 @@ pub struct Bus {
     vram_addr: u16, // cpu通过PPUSCROLL/PPUADDR 读写VRAM时，需要一个addr
     pub oam: oam::Oam,
     palettes: palettes::Palettes,
-    apu_io_registers: apu_io_registers::ApuIoRegisters,
+    pub apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
     cpu_ram: cpu_ram::CpuRam, // debug
     input_stream:Receiver<HashSet<egui::Key>>
@@ -64,7 +64,6 @@ impl Bus {
     }
 
     pub fn clock(&mut self) {
-
         if self.apu_io_registers.input_enable {
             // println!("接收到输入{:?}",current_input);
             if let Some(input) = self.input_stream.try_recv().ok() {
@@ -101,6 +100,61 @@ impl Bus {
         self.mapper= create_mapper(&rom);
     }
 
+    // 无副作用的读，用于调试
+    pub fn cpu_read_debug(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1fff => {
+                // 系统主内存
+                self.cpu_ram.read(addr)
+            }
+            0x2000..=0x3FFF => {
+                //高三位为1:  PPU 寄存器
+                let mut out_data = self.registers.read(addr);
+                // 一些附加影响
+                match 0x2000+(addr & 0x0007) as usize {
+                    0x2004 => {
+                        // 读取 OAMDATA 寄存器，进行 OAM 读
+                        out_data = self.oam.read(self.oam.oam_addr);
+                    },
+                    0x2007 => {
+                        // 读取 PPUDATA 寄存器，进行 VRAM 读
+                        match self.vram_addr {
+                            0x0..=0x3eff => {
+                                out_data = self.vram_buffer;
+                            }
+                            0x3f00..=0x3fff => {
+                                // 调色板,无缓冲
+                                out_data = self.palettes.read(self.vram_addr);
+                            }
+                            _ => (),
+                        }
+                    },
+                    _ => (),
+                }
+                out_data
+            }
+            0x4000..=0x401F => {
+                //高三位为2:  APU ,io寄存器
+                let out_data = self.apu_io_registers.read_debug(addr);
+                out_data
+            }
+            0x4020..=0x5FFF => {
+                //高三位为3:  扩展 ROM
+                todo!()
+            }
+            0x6000..=0x7FFF => {
+                //高三位为4: 存档 SRAM
+                todo!()
+            }
+            0x8000..=0xFFFF => {
+                //高三位为5:  PRG-ROM
+                self.mapper.read_prg_rom(addr)
+            }
+            _ => 0, // 不可能的地址范围
+        }
+    }
+
+
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => {
@@ -112,6 +166,9 @@ impl Bus {
                 let mut out_data = self.registers.read(addr);
                 // 一些附加影响
                 match 0x2000+(addr & 0x0007) as usize {
+                    0x2002 => {
+                        self.registers.ppustatus &= 0x7F; // 读取ppustatus会清除vblank标志
+                    },
                     0x2004 => {
                         // 读取 OAMDATA 寄存器，进行 OAM 读
                         out_data = self.oam.read(self.oam.oam_addr);
