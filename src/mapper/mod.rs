@@ -1,8 +1,10 @@
 pub mod mapper000;
 mod mapper003;
+mod mapper001;
 
 use mapper000::NromMapper;
 use mapper003::Mapper003;
+use mapper001::Mapper001;
 
 #[derive(Debug)]
 pub struct RomHeader {
@@ -36,6 +38,7 @@ impl std::default::Default for InterruptVectors {
 pub trait Mapper: Send {
     fn read_prg_rom(&self, addr: u16) -> u8;
     fn write_prg_rom(&mut self, addr: u16, data: u8);
+    fn write_prg_ram(&mut self, addr: u16, data: u8);
     fn read_chr_rom(&self, addr: u16) -> u8;
     fn write_chr_rom(&mut self, addr: u16, data: u8);
     fn ppu_mirror_mode(&self) -> u8;
@@ -48,7 +51,8 @@ pub fn create_mapper(
 ) -> Box<dyn Mapper> {
 
     let rom_header = parse_rom_header(&rom_data);
-    println!("prg_rom_size:{}kb,chr_rom_size:{}kb",rom_header.prg_rom_size/1024,rom_header.chr_rom_size/1024);
+    println!("prg_rom_size:{}kb,chr_rom_size:{}kb,mapper_number:{},mirroring_type:{},battery_backed_ram:{},trainer:{},nes2_0:{}",
+             rom_header.prg_rom_size,rom_header.chr_rom_size,rom_header.mapper_number,rom_header.mirroring_type,rom_header.battery_backed_ram,rom_header.trainer,rom_header.nes2_0);
 
     // 提取PRG-ROM和CHR-ROM数据
     let (prg_rom, chr_rom) = parse_prg_and_chr_rom_data(&rom_data);
@@ -58,6 +62,7 @@ pub fn create_mapper(
 
     match rom_header.mapper_number {
         0 => Box::new(NromMapper::new(prg_rom, chr_rom, rom_header.mirroring_type)),
+        1 => Box::new(Mapper001::new(prg_rom, chr_rom, rom_header.mirroring_type)),
         3 => Box::new(Mapper003::new(prg_rom, chr_rom, rom_header.mirroring_type)),
         // 在这里添加其他 Mapper 的实现
         _ => panic!("Unsupported mapper ID: {}", rom_header.mapper_number),

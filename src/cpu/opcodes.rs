@@ -1789,6 +1789,15 @@ pub fn decode_opcode(opcode: u8) -> InstructionInfo {
             unofficial: true,
             instruction_type: CrossingPage,
         },
+        0xAB => InstructionInfo {
+            operand_code: opcode,
+            instruction: LAX,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },
 
         // SAX
         0x87 => InstructionInfo {
@@ -2238,6 +2247,124 @@ pub fn decode_opcode(opcode: u8) -> InstructionInfo {
             unofficial: false,
             instruction_type: Common,
         },
+
+        //ANC
+        0x0B => InstructionInfo {
+            operand_code: opcode,
+            instruction: ANC,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },
+        0x2B => InstructionInfo {
+            operand_code: opcode,
+            instruction: ANC,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        // ALR
+        0x4B => InstructionInfo {
+            operand_code: opcode,
+            instruction: ALR,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        //xaa
+        0x8B => InstructionInfo {
+            operand_code: opcode,
+            instruction: XAA,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },  
+
+        //AHX
+        0x93 => InstructionInfo {
+            operand_code: opcode,
+            instruction: AHX,
+            addressing_mode: IndirectY,
+            operand_size:2,
+            instruction_cycle: 6,
+            unofficial: true,
+            instruction_type: Common,
+        },
+        0x9F => InstructionInfo {
+            operand_code: opcode,
+            instruction: AHX,
+            addressing_mode: AbsoluteY,
+            operand_size:3,
+            instruction_cycle: 5,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        //TAS
+        0x9B => InstructionInfo {
+            operand_code: opcode,
+            instruction: TAS,
+            addressing_mode: AbsoluteY,
+            operand_size:3,
+            instruction_cycle: 5,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        //SHY
+        0x9C => InstructionInfo {
+            operand_code: opcode,
+            instruction: SHY,
+            addressing_mode: AbsoluteX,
+            operand_size:3,
+            instruction_cycle: 5,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        //SHX
+        0x9E => InstructionInfo {
+            operand_code: opcode,
+            instruction: SHX,
+            addressing_mode: AbsoluteY,
+            operand_size:3,
+            instruction_cycle: 5,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        //LAS
+        0xBB => InstructionInfo {
+            operand_code: opcode,
+            instruction: LAS,
+            addressing_mode: AbsoluteY,
+            operand_size:3,
+            instruction_cycle: 4,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
+        // AXS
+        0xCB => InstructionInfo {
+            operand_code: opcode,
+            instruction: AXS,
+            addressing_mode: Immediate,
+            operand_size:2,
+            instruction_cycle: 2,
+            unofficial: true,
+            instruction_type: Common,
+        },
+
 
         // ...其他操作码到指令的映射
         _ => panic!("当前操作码{:02X}不存在", opcode),

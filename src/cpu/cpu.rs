@@ -118,9 +118,15 @@ impl Cpu {
         self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
+        self.cpu_cycle_wait=0;
         self.instruction_info=InstructionInfo::default();
         self.log=String::new();
-        // self.cpu_ram.reset();
+    }
+
+    pub fn hard_reset(&mut self) {
+        self.reset();
+        self.registers.p = 0x34;
+        self.interrupt = Interrupt::default();
     }
 
     fn read(&self, address: u16) -> u8 {
@@ -176,7 +182,7 @@ impl Cpu {
         // 执行nmi，边缘触发
         if (self.interrupt.nmi.0==true) && (self.interrupt.nmi.1==false)  {
             self.nmi();
-            // println!("nmi");
+            // println!("nmi!,cycle:{}",self.cpu_cycle);
         }
         // 如果有irq信号，执行irq
         if self.interrupt.irq && !self.registers.get_flag(StatusFlags::InterruptDisable) {
@@ -192,7 +198,7 @@ impl Cpu {
 
         let current_cyc = self.cpu_cycle;
         self.execute();  
-        self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
+        self.cpu_cycle_wait += self.cpu_cycle-current_cyc; 
     }
 
         // 反汇编当前结果
@@ -648,6 +654,16 @@ impl Cpu {
             Instruction::RRA => self.rra(),
             Instruction::BRK => self.brk(),
             Instruction::CLI => self.cli(),
+            Instruction::ANC => self.anc(),
+            Instruction::ALR => self.alr(),
+            Instruction::ARR => self.arr(),
+            Instruction::XAA => self.xaa(),
+            Instruction::AHX => self.ahx(),
+            Instruction::TAS => self.tas(),
+            Instruction::SHY => self.shy(),
+            Instruction::SHX => self.shx(),
+            Instruction::LAS => self.las(),
+            Instruction::AXS => self.axs(),
             // ... 处理其他指令
             _ => panic!("{:?}指令暂未实现",self.instruction_info.instruction), // 如果尚未实现的指令，触发未实现错误
         }
@@ -1699,6 +1715,139 @@ impl Cpu {
         self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
     }
     // ... 实现其他指令
+
+    fn anc(&mut self){
+        let (operand_address,page_crossed) = self.get_operand_address();
+
+        // AND
+        let operand = self.read(operand_address);
+        self.registers.a &= operand;
+        self.check_zsflag(self.registers.a);
+
+        // ANC
+        self.registers.set_flag(StatusFlags::Carry, self.registers.get_flag(StatusFlags::Negative));
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+    }
+
+    fn alr (&mut self){
+        let (operand_address,page_crossed) = self.get_operand_address();
+
+        // AND
+        let operand = self.read(operand_address);
+        self.registers.a &= operand;
+        self.check_zsflag(self.registers.a);
+
+        // LSR
+        self.registers.set_flag(StatusFlags::Carry, self.registers.a & 0x01 == 0x01);
+        self.registers.a >>= 1;
+        self.check_zsflag(self.registers.a);
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+    }
+
+    fn arr (&mut self){
+        let (operand_address,page_crossed) = self.get_operand_address();
+
+        // AND
+        let operand = self.read(operand_address);
+        self.registers.a &= operand;
+        self.check_zsflag(self.registers.a);
+
+        // ROR
+        let operand = self.registers.a;
+    
+        // 将操作数最低位旋转到C标志位
+        let carry = operand & 1;
+    
+        // 向右旋转操作数
+        let result = (operand >> 1) | (self.registers.get_flag(StatusFlags::Carry) as u8) << 7;
+    
+        self.registers.a = result;
+    
+        // 更新 C  标志位
+        self.registers.set_flag(StatusFlags::Carry, result & 0x40 != 0);
+
+        // 更新 V 标志位
+        self.registers.set_flag(StatusFlags::Overflow, ((result & 0x40) != 0) ^ ((result & 0x20) == 0));
+
+        self.check_zsflag(self.registers.a);
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn xaa (&mut self){
+        //println!("xaa指令不稳定！");
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn ahx (&mut self){
+        //println!("ahx指令不稳定！");
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn tas (&mut self){
+        //println!("tas指令不稳定！");
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn shy (&mut self){
+        //println!("shy指令不稳定！");
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn shx (&mut self){
+        //println!("shx指令不稳定！");
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+
+    }
+    fn las (&mut self){
+        //println!("las指令不稳定！");
+        let (operand_address, page_crossed) = self.get_operand_address();
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64; 
+        if page_crossed {
+            self.cpu_cycle += 1;
+        }
+    }
+    fn axs (&mut self){
+         // 获取操作数地址
+        let (operand_address, page_crossed) = self.get_operand_address();
+
+        // 获取操作数
+        let operand = self.read(operand_address);
+
+        // AND
+        // 将A寄存器和X寄存器进行AND操作
+        let temp = self.registers.a & self.registers.x;
+
+        // 计算结果
+        let result = temp.wrapping_sub(operand);
+
+        // 更新标志位
+        self.registers.set_flag(StatusFlags::Carry, temp >= operand);
+        self.check_zsflag(result);
+
+        // 将计算结果存入X寄存器
+        self.registers.x = result;
+
+        self.registers.pc += self.instruction_info.operand_size as u16;
+        self.cpu_cycle+=self.instruction_info.instruction_cycle as u64;
+    }
 }
 
  

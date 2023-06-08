@@ -75,7 +75,8 @@ impl Registers {
 
     pub fn read(&mut self, addr: u16) -> u8 {
         let reg_addr = 0x2000+(addr & 0x0007) as usize; 
-        match reg_addr {
+        
+        let out_data = match reg_addr {
             0x2000 => self.ppuctrl,
             0x2001 => self.ppumask,
             0x2002 => self.ppustatus,
@@ -85,11 +86,14 @@ impl Registers {
             0x2006 => self.ppuaddr,
             0x2007 => self.ppudata,
             _ => panic!("invalid ppu register addr: {:04X}", addr),
-        }
+        };
+        
+        out_data
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
         let reg_addr = 0x2000+(addr & 0x0007) as usize; 
+        
         match reg_addr {
             0x2000 => self.ppuctrl = data,
             0x2001 => self.ppumask = data,

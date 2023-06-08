@@ -22,6 +22,7 @@ pub fn run_test() {
     // emulator.start();
     emulator.load_rom(rom_path);
     emulator.cpu.registers.pc = 0xC000; // 测试时，从特定地址开始运行
+    emulator.cpu.registers.p = 0x24; // 测试时，从特定地址开始运行
     emulator.bus.borrow_mut().apu_io_registers.ram = [0xff; 0x20];
     emulator.bus.borrow_mut().apu_io_registers.input_history = 0xff; 
  
@@ -46,16 +47,9 @@ pub fn run_test() {
         );
 
         
-        emulator.cpu.step();
-        while emulator.cpu.cpu_cycle_wait != 0 {
-            for _ in 0..3 {
-                emulator.ppu.step();
-            }
-            emulator.cpu.cpu_cycle_wait -= 1;
-        }
+        emulator.cpu_step();
 
         current_num+=1;
-        // println!("after 0x0400:{:02X}",emulator.cpu.memory.ram[0x0081]);
 
         println!("{:*<48}", current_num);
     }

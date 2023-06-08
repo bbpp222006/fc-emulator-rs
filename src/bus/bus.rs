@@ -42,7 +42,6 @@ pub struct Bus {
     pub apu_io_registers: apu_io_registers::ApuIoRegisters,
     mapper: Box<dyn Mapper>,
     cpu_ram: cpu_ram::CpuRam, // debug
-    input_stream:Receiver<HashSet<egui::Key>>
 }
 
 impl Bus {
@@ -59,31 +58,11 @@ impl Bus {
             apu_io_registers: apu_io_registers::ApuIoRegisters::new(),
             mapper: default_mapper,
             cpu_ram: cpu_ram::CpuRam::new(), // debug
-            input_stream
         }
     }
 
-    pub fn clock(&mut self) {
-        if self.apu_io_registers.input_enable {
-            // println!("接收到输入{:?}",current_input);
-            if let Some(input) = self.input_stream.try_recv().ok() {
-                let mut current_input = VecDeque::from([0; 8].to_vec());
-                for key in input {
-                    match key {
-                        Key::J => current_input[0] = 1,
-                        Key::K => current_input[1] = 1,
-                        Key::Space => current_input[2] = 1,
-                        Key::Enter => current_input[3] = 1,
-                        Key::W => current_input[4] = 1,
-                        Key::S => current_input[5] = 1,
-                        Key::A => current_input[6] = 1,
-                        Key::D => current_input[7] = 1,
-                        _ => {}
-                    }
-                }
-                self.apu_io_registers.current_input = current_input;
-            }   
-        }    
+    pub fn refresh_input(&mut self, new_input: HashSet<egui::Key>) {
+        self.apu_io_registers.inpur_reg = new_input;         
     }
 
     pub fn reset(&mut self) {
@@ -94,6 +73,16 @@ impl Bus {
         self.vram_addr = 0;
         self.apu_io_registers.reset(); // debug
         self.cpu_ram.reset(); // debug
+        self.mapper.reset(); 
+        self.interrupt_status = 0b0000_0000;
+        self.vram_buffer=0;
+        self.vram_addr=0;
+        self.palettes.reset();
+    }
+
+    pub fn hard_reset(&mut self) {
+        self.reset();
+
     }
 
     pub fn load_rom(&mut self, rom: Vec<u8>) {
@@ -203,6 +192,7 @@ impl Bus {
                     },
                     _ => (),
                 }
+                
                 out_data
             }
             0x4000..=0x401F => {
@@ -235,7 +225,6 @@ impl Bus {
             // 0x2000 - 0x3FFF: PPU 寄存器 (8 字节镜像，每 0x8 个地址有一个寄存器)
             0x2000..=0x3FFF => {
                 self.registers.write(addr, data);
-
                 // 一些附加影响
                 match 0x2000+(addr & 0x0007) as usize {
                     0x2003 => {
@@ -304,7 +293,7 @@ impl Bus {
             }
             0x6000..=0x7FFF => {
                 //高三位为4: 存档 SRAM
-                todo!()
+                self.mapper.write_prg_ram(addr, data);
             }
             // 0x4020 - 0xFFFF: Mapper 寄存器，卡带相关内存区域
             0x8000..=0xFFFF => {

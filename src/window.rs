@@ -10,12 +10,15 @@ use egui_extras::image::RetainedImage;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::Instant;
+use rfd::FileDialog;
 
 #[derive( serde::Serialize)]
 
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 struct Status {
     paused: bool,
+    rom_path: String,
+    log_enabled: bool,
 }
 
 struct CpuState {
@@ -32,6 +35,9 @@ struct PpuState{
     scanline: u16,
     dot: u16,
     cycles: u64,
+    ppuctrl: u8,
+    ppumask: u8,
+    ppustatus: u8,
 }
 struct BusState{
     nmi: bool,
@@ -106,7 +112,11 @@ impl MyApp {
             fps_history: VecDeque::from([0.0; 20]),
             sample_frq: fps_target,
             fps_show: 0.0,
-            window_status: Status { paused: false },
+            window_status: Status { 
+                paused: true,
+                rom_path: String::from(""),
+                log_enabled: false,
+            },
             emulator_state: EmulatorState{
                 cpu_state: CpuState{
                     a: 0,
@@ -122,6 +132,9 @@ impl MyApp {
                     scanline: 0,
                     dot: 0,
                     cycles: 0,
+                    ppuctrl: 0,
+                    ppumask: 0,
+                    ppustatus: 0,
                 },
                 bus_state: BusState{
                     nmi: false,
@@ -150,17 +163,32 @@ impl MyApp {
         self.emulator_state.ppu_state.scanline = self.emulator.ppu.scanline;
         self.emulator_state.ppu_state.dot = self.emulator.ppu.dot;
         self.emulator_state.ppu_state.cycles = self.emulator.ppu.cycles;
+        self.emulator_state.ppu_state.ppuctrl = self.emulator.bus.borrow().registers.ppuctrl;
+        self.emulator_state.ppu_state.ppumask = self.emulator.bus.borrow().registers.ppumask;
+        self.emulator_state.ppu_state.ppustatus = self.emulator.bus.borrow().registers.ppustatus;
     }
     fn update_bus_state(&mut self) {
         let interrupt_status =  self.emulator.bus.borrow_mut().interrupt_status;
-        self.emulator_state.bus_state.nmi = interrupt_status>>2 & 1 == 1;
+        self.emulator_state.bus_state.nmi = interrupt_status>>1 & 1 == 1;
         self.emulator_state.bus_state.irq = interrupt_status & 1 == 1;
-        self.emulator_state.bus_state.reset = interrupt_status>>3 & 1 == 1;
+        self.emulator_state.bus_state.reset = interrupt_status>>2 & 1 == 1;
     }
     fn update_emulator_state(&mut self) {
         self.update_cpu_state();
         self.update_ppu_state();
         self.update_bus_state();
+    }
+
+    fn loop_to_frame(&mut self) -> Frame {
+        while !self.emulator.ppu.new_frame {
+            self.emulator.cpu_step();
+        }
+        self.emulator.ppu.new_frame = false;
+        Frame {
+            data: self.emulator.ppu.frame_color_index_cache.to_vec(),
+            width: 256,
+            height: 240,
+        }
     }
 
     pub fn frame_to_color_image(&self, frame: &Frame) -> RetainedImage {
@@ -188,24 +216,14 @@ impl MyApp {
     }
 }
 
-fn loop_to_frame(emulator: &mut Emulator) -> Frame {
-    while !emulator.ppu.new_frame {
-        emulator.cpu_step();
-    }
-    emulator.ppu.new_frame = false;
-    Frame {
-        data: emulator.ppu.frame_color_index_cache.to_vec(),
-        width: 256,
-        height: 240,
-    }
-}
+
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.window_status.paused {
             // 接收新图像
             if self.current_time.elapsed().as_secs_f64() > 1.0 / self.sample_frq {
-                let new_frame = loop_to_frame(&mut self.emulator);
+                let new_frame = self.loop_to_frame();
                 self.image = self.frame_to_color_image(&new_frame);
                 self.fps_history
                     .push_front(1.0 / self.current_time.elapsed().as_secs_f64());
@@ -232,8 +250,39 @@ impl eframe::App for MyApp {
         // 增加暂停按钮
         egui::SidePanel::left("side_panel_left").show(ctx, |ui| {
             ui.heading("Controls");
+            // 加载rom
+            ui.horizontal(|ui| {
+                ui.label(format!("ROM: {}",&self.window_status.rom_path));
+                if ui.button("Load").clicked() {
+                    let files = FileDialog::new()
+                        .add_filter("nes", &["nes"])
+                        .set_directory("/")
+                        .pick_file().unwrap();
+                    self.window_status.rom_path = files.file_name().unwrap().to_str().unwrap().to_string();
+                    self.emulator.load_rom(files.to_str().unwrap());
+                    self.update_emulator_state();
+                }
+            });
+            // 重新加载
+            ui.horizontal(|ui| {
+                if ui.button("Reset").clicked() {
+                    self.emulator.reset();
+                    self.update_emulator_state();
+                }
+                if ui.button("HardReset").clicked() {
+                    self.emulator.hard_reset();
+                    self.update_emulator_state();
+                }
+            });
+
+            // 是否记录日志
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.window_status.log_enabled, "Log");
+            });
+            
+            
             // 增加暂停按钮
-            if ui.button(if self.window_status.paused { "继续"} else {"暂停"}).clicked(){
+            if ui.button(if self.window_status.paused {"继续"} else {"暂停"}).clicked(){
                 self.window_status.paused = !self.window_status.paused;
                 self.update_emulator_state();
             }
@@ -247,12 +296,8 @@ impl eframe::App for MyApp {
                 self.emulator.cpu_clock();
                 self.update_emulator_state();
             }
-            if ui.button("ppu执行").clicked(){
-                self.emulator.ppu_step();
-                self.update_emulator_state();
-            }
             if ui.button("下一帧").clicked(){
-                let new_frame = loop_to_frame(&mut self.emulator);
+                let new_frame = self.loop_to_frame();
                 self.image = self.frame_to_color_image(&new_frame);
                 self.update_emulator_state();
             }
@@ -261,25 +306,29 @@ impl eframe::App for MyApp {
         // 右侧状态栏显示cpu、ppu、bus状态
         egui::SidePanel::right("side_panel_right").show(ctx, |ui| {
             ui.heading("CPU");
-            ui.label(format!("A: {:02X}\nX: {:02X}\nY: {:02X}\nPC: {:04X}\nSP: {:02X}\nP: {:08b}\n   CZIDB-VN",
+            ui.label(format!("A: {:02X}\nX: {:02X}\nY: {:02X}\nPC: {:04X}\nSP: {:02X}\nP: {:08b}:{:02X}\n   CZIDB-VN\ncycles: {}",
                 self.emulator_state.cpu_state.a,
                 self.emulator_state.cpu_state.x,
                 self.emulator_state.cpu_state.y,
                 self.emulator_state.cpu_state.pc,
                 self.emulator_state.cpu_state.sp,
-                self.emulator_state.cpu_state.p,));
+                self.emulator_state.cpu_state.p,
+                self.emulator_state.cpu_state.p,
+                self.emulator_state.cpu_state.cycles));
 
             // 当前执行执行的指令反编译
             let disasm = self.emulator.cpu.disassemble_instruction_short();
             ui.label(format!("Disasm:{}", disasm));
             
-
             ui.separator();
 
             ui.heading("PPU");
             ui.label(format!("Scanline: {}", self.emulator_state.ppu_state.scanline));
             ui.label(format!("Dot: {}", self.emulator_state.ppu_state.dot));
             ui.label(format!("Cycles: {}", self.emulator_state.ppu_state.cycles));
+            ui.label(format!("ppuctrl: {:08b}", self.emulator_state.ppu_state.ppuctrl));
+            ui.label(format!("ppumask: {:08b}", self.emulator_state.ppu_state.ppumask));
+            ui.label(format!("ppustatus: {:08b}", self.emulator_state.ppu_state.ppustatus));
             ui.separator();
             ui.heading("BUS");
             ui.label(format!("NMI: {}", self.emulator_state.bus_state.nmi));
@@ -302,19 +351,8 @@ impl eframe::App for MyApp {
             // 接收输入
             let input_state = ui.input(|i| i.keys_down.clone());
             // println!("{:?}", input_state);
-            if !input_state.is_empty() {
-                match self.emulator.pip_input_stream.0.try_send(input_state) {
-                    Ok(_) => {}
-                    Err(err) => match err {
-                        crossbeam::channel::TrySendError::Full(_) => {
-                            // println!("输入管道已满,直接丢弃");
-                        }
-                        crossbeam::channel::TrySendError::Disconnected(_) => {
-                            // println!("输入管道已断开");
-                        }
-                    },
-                };
-            }
+            self.emulator.refresh_input(input_state);
+
         });
         ctx.request_repaint();
     }

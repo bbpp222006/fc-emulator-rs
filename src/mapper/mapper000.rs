@@ -9,6 +9,7 @@ use super::Mapper;
 #[derive(Debug)]
 pub struct NromMapper {
     prg_rom: Vec<u8>,
+    prg_ram: Vec<u8>,
     chr_rom: Vec<u8>,
     mirror_mode: u8,
 }
@@ -18,6 +19,7 @@ impl NromMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirror_mode: u8) -> Self {
         NromMapper {
             prg_rom,
+            prg_ram: vec![0; 0x2000],
             chr_rom,
             mirror_mode,
         }
@@ -35,6 +37,10 @@ impl Mapper for NromMapper {
     fn write_prg_rom(&mut self, _addr: u16, _data: u8) {
         // NROM 映射器通常不支持 PRG-ROM 写入
         // 你可以在这里添加日志或错误处理，或者什么都不做
+    }
+    fn write_prg_ram(&mut self, addr: u16, data: u8) {
+        let addr = addr as usize % self.prg_ram.len();
+        self.prg_ram[addr] = data;
     }
 
     fn read_chr_rom(&self, addr: u16) -> u8 {
@@ -56,7 +62,6 @@ impl Mapper for NromMapper {
     }
     
     fn reset(&mut self) {
-        // 在这个例子中，NromMapper 没有需要重置的内部状态。
-        // 如果有需要重置的状态，你可以在这里进行相应的操作。
+        self.prg_ram = vec![0; 0x2000];
     }
 }

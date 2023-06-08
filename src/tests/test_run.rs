@@ -11,18 +11,11 @@ use crate::emulator::Emulator;
 use crate::window::MyApp;
 
 pub fn run_test() {
-    let rom_path = "rom/cpu_dummy_reads.nes";
     let mut emulator = Emulator::new();
-    let pip_ppu_frameout = emulator.pip_ppu_frame.1.clone();
-    let pip_input_stream_in = emulator.pip_input_stream.0.clone();
-    emulator.load_rom(rom_path);
-
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(340.0, 261.0)),
         ..Default::default()
     };
-
-    
     eframe::run_native(
         "Show an image with eframe/egui",
         options,

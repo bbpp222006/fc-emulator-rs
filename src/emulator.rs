@@ -49,7 +49,7 @@ impl Emulator {
         let pip_rom = bounded(1);
         let pip_log = bounded(1);
         let pip_ppu_frame = bounded(1);
-        let pip_input_stream: (Sender<HashSet<Key>>, Receiver<HashSet<Key>>) = bounded(5);
+        let pip_input_stream: (Sender<HashSet<Key>>, Receiver<HashSet<Key>>) = bounded(1);
         let bus: Rc<RefCell<Bus>>  = Rc::new(RefCell::new(Bus::new(pip_input_stream.1.clone())));
         let cpu = Cpu::new(Rc::clone(&bus));
         let ppu = Ppu::new(Rc::clone(&bus),pip_ppu_frame.0.clone());
@@ -86,14 +86,19 @@ impl Emulator {
         self.bus.borrow_mut().reset();
     }
 
+    pub fn hard_reset(&mut self) {
+        self.cpu.hard_reset();
+        self.ppu.hard_reset();
+        self.bus.borrow_mut().hard_reset();
+    }
+
     
 
-    // pub fn ppu_clock(&mut self) {
-    //     self.ppu.step();
-    // }
+    pub fn refresh_input(&mut self,new_input:HashSet<egui::Key>) {
+        self.bus.borrow_mut().refresh_input(new_input);
+    }
 
     pub fn cpu_clock(&mut self) {
-        self.bus.borrow_mut().clock();
         if self.cpu.cpu_cycle_wait == 0 {
             self.cpu.step();
         } else {
@@ -105,7 +110,6 @@ impl Emulator {
     }
 
     pub fn cpu_step(&mut self) {
-        self.bus.borrow_mut().clock();
         while self.cpu.cpu_cycle_wait != 0 {
             for _ in 0..3 {
                 self.ppu.step();
@@ -113,13 +117,14 @@ impl Emulator {
             self.cpu.cpu_cycle_wait -= 1;
         }
         self.cpu.step();
+        while self.cpu.cpu_cycle_wait != 0 {
+            for _ in 0..3 {
+                self.ppu.step();
+            }
+            self.cpu.cpu_cycle_wait -= 1;
+        }
     }
     
-    pub fn ppu_step(&mut self) {
-        self.bus.borrow_mut().clock();
-        self.ppu.step();
-    }
-
     pub fn get_log(&self) -> String {
         self.cpu.get_current_log()
     }

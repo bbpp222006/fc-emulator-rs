@@ -246,6 +246,11 @@ impl Ppu {
         self.cycles = 7;
         self.scanline = 0;
         self.dot = 21;
+    }
+    pub fn hard_reset(&mut self) {
+        self.reset();
+        self.ppustatus = 0;
+        self.nmi_status = false;
         // ... reset other fields
     }
 
@@ -476,25 +481,6 @@ impl Ppu {
     }
 
     pub fn step(&mut self) {
-        match self.dot {
-            0 => {
-                // 在每个扫描线的开始，我们可能需要做一些准备工作
-                // self.start_of_scanline();
-            }
-            1..=256 | 321..=336 => {
-                // 在可见扫描线和两个“空闲”周期中，PPU 需要获取背景和精灵的图块数据
-                // self.fetch_tile_data();
-            }
-            257..=320 => {
-                // 在这个阶段，PPU 需要获取下一行将要显示的精灵的数据
-                ()
-            }
-            337..=340 => {
-                // 在每个扫描线的最后几个周期中，PPU 将进行一些清理工作
-                ()
-            }
-            _ => unreachable!(),
-        }
 
         // 更新 PPU 的当前周期和扫描线
         self.cycles += 1;
@@ -502,32 +488,43 @@ impl Ppu {
         if self.dot > 340 {
             self.dot = 0;
             self.scanline += 1;
-            if self.scanline == 241 {
-                // 开始vbalnk
-                self.bus.borrow_mut().registers.ppustatus |= 0x80;
-                self.test_render_background();
-                self.test_render_sprite();
-                self.new_frame = true;
-            }
-            if self.scanline > 241 && self.scanline < 261 {
-                // vblank期间，如果设置了nmi，那么就触发nmi
-                let in_vblank = self.bus.borrow_mut().registers.ppustatus>>7 ==1;
-                let nmi_enabled =self.bus.borrow_mut().registers.ppuctrl>>7 ==1;
-                if in_vblank && nmi_enabled {
-                    self.bus.borrow_mut().interrupt_status|= 0b00000010;
-                } else {
-                    self.bus.borrow_mut().interrupt_status&= 0b11111101;
-                    // self.set_nmi(false);
-                }
-            }
-
-            if self.scanline > 261 {
-                // vblank结束
-                self.bus.borrow_mut().registers.ppustatus &= 0x7f;
+        }
+        if self.scanline > 261 {
+            self.scanline = 0;
+        }
+        if self.scanline == 240 && self.dot == 0 {
+            self.test_render_background();
+            self.test_render_sprite();
+            self.new_frame = true;
+        }
+        if self.scanline == 241 &&self.dot==1 {
+            // 开始vbalnk
+            self.bus.borrow_mut().registers.ppustatus |= 0x80;
+            
+        }  
+        if self.scanline >= 241 && self.scanline < 261 {
+            // vblank期间，如果设置了nmi，那么就设置nmi电平
+            let in_vblank = self.bus.borrow_mut().registers.ppustatus>>7 ==1;
+            let nmi_enabled =self.bus.borrow_mut().registers.ppuctrl>>7 ==1;
+            if in_vblank && nmi_enabled {
+                self.bus.borrow_mut().interrupt_status|= 0b00000010;
+            } else {
                 self.bus.borrow_mut().interrupt_status&= 0b11111101;
-                self.scanline = 0;
             }
         }
+
+        if self.scanline == 261 &&self.dot==1{
+            // vblank结束
+            self.bus.borrow_mut().registers.ppustatus &= 0x7f;
+            self.bus.borrow_mut().interrupt_status&= 0b11111101;
+           
+        }
+        if self.scanline == 262{
+            self.scanline = 0;
+        }
+
+       
+        
     }
 
     // ... other Ppu methods
