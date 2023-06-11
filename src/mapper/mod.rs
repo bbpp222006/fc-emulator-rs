@@ -37,6 +37,7 @@ impl std::default::Default for InterruptVectors {
 // 定义一个通用的 Mapper trait
 pub trait Mapper: Send {
     fn read_prg_rom(&self, addr: u16) -> u8;
+    fn read_prg_ram(&self, addr: u16) -> u8;
     fn write_prg_rom(&mut self, addr: u16, data: u8);
     fn write_prg_ram(&mut self, addr: u16, data: u8);
     fn read_chr_rom(&self, addr: u16) -> u8;

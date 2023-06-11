@@ -73,7 +73,7 @@ impl Registers {
         }
     }
 
-    pub fn read(&mut self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16) -> u8 {
         let reg_addr = 0x2000+(addr & 0x0007) as usize; 
         
         let out_data = match reg_addr {
@@ -97,7 +97,7 @@ impl Registers {
         match reg_addr {
             0x2000 => self.ppuctrl = data,
             0x2001 => self.ppumask = data,
-            0x2002 => self.ppustatus = data,
+            0x2002 => {}//self.ppustatus = data, cpu不能写入ppustatus
             0x2003 => self.oamaddr = data,
             0x2004 => self.oamdata = data,
             0x2005 => self.ppuscroll = data,

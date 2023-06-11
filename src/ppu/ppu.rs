@@ -91,6 +91,7 @@ pub struct Ppu {
     channels: PpuChannels,
 
     pub new_frame: bool,
+    pub frame_num: u64, //用于计数，奇数帧和偶数帧
     // // 当前扫描线是否在水平空白期。水平空白期是每一条扫描线渲染结束后的一个时间段，这个时期内 PPU 不会渲染任何东西，但可以进行 VRAM 的读写。
     // in_hblank: bool,
 
@@ -180,6 +181,7 @@ impl Ppu {
             scanline: 0,
             dot: 0,
             new_frame: false,
+            frame_num: 0,
             // rendering_enabled: todo!(),
             // in_hblank: todo!(),
             // bg_pattern_table_address: todo!(),
@@ -216,6 +218,7 @@ impl Ppu {
             channels: PpuChannels { ppu_frame_out },
             ppustatus: 0,
             nmi_status: false,
+            
         }
     }
 
@@ -485,45 +488,63 @@ impl Ppu {
         // 更新 PPU 的当前周期和扫描线
         self.cycles += 1;
         self.dot += 1;
+        // 奇数帧，dot=340时，跳过dot=0的扫描线
         if self.dot > 340 {
             self.dot = 0;
             self.scanline += 1;
         }
         if self.scanline > 261 {
             self.scanline = 0;
+            self.frame_num += 1;
         }
-        if self.scanline == 240 && self.dot == 0 {
-            self.test_render_background();
-            self.test_render_sprite();
-            self.new_frame = true;
-        }
-        if self.scanline == 241 &&self.dot==1 {
-            // 开始vbalnk
-            self.bus.borrow_mut().registers.ppustatus |= 0x80;
-            
-        }  
-        if self.scanline >= 241 && self.scanline < 261 {
-            // vblank期间，如果设置了nmi，那么就设置nmi电平
-            let in_vblank = self.bus.borrow_mut().registers.ppustatus>>7 ==1;
-            let nmi_enabled =self.bus.borrow_mut().registers.ppuctrl>>7 ==1;
-            if in_vblank && nmi_enabled {
-                self.bus.borrow_mut().interrupt_status|= 0b00000010;
-            } else {
+        
+        match (self.scanline, self.dot) {
+            (0..=239, 0..=255) => {
+                // 像素渲染
+                // self.render_pixel();
+            }
+            (0..=239, 256..=319) => {
+                // 读取下一个tile
+                // self.fetch_tile();
+            }
+            (0..=239, 320..=335) => {
+                // 读取下一个tile
+                // self.fetch_tile();
+                // 读取下一个精灵
+                // self.fetch_sprite();
+            }
+            (0..=239, 336..=339) => {
+                // 读取下一个精灵
+                // self.fetch_sprite();
+            }
+            (240, 0) => {
+                // 垂直空白扫描线
+                self.test_render_background();
+                self.test_render_sprite();
+                self.new_frame = true;
+            }
+            (241, 1) => {
+                // 开始vblank
+                self.bus.borrow_mut().registers.ppustatus |= 0x80;
+            }
+            (241..=260, 0..=340) => {
+                 // vblank期间，如果设置了nmi，那么就设置nmi电平
+                let in_vblank = self.bus.borrow().registers.ppustatus>>7 ==1;
+                let nmi_enabled =self.bus.borrow().registers.ppuctrl>>7 ==1;
+                if in_vblank && nmi_enabled {
+                    self.bus.borrow_mut().interrupt_status|= 0b00000010;
+                } else {
+                    self.bus.borrow_mut().interrupt_status&= 0b11111101;
+                }
+            }
+            (261, 0) => {
+                // 结束vblank
+                self.bus.borrow_mut().registers.ppustatus &= 0x7f;
                 self.bus.borrow_mut().interrupt_status&= 0b11111101;
             }
+            _ => {}
         }
-
-        if self.scanline == 261 &&self.dot==1{
-            // vblank结束
-            self.bus.borrow_mut().registers.ppustatus &= 0x7f;
-            self.bus.borrow_mut().interrupt_status&= 0b11111101;
-           
-        }
-        if self.scanline == 262{
-            self.scanline = 0;
-        }
-
-       
+        
         
     }
 

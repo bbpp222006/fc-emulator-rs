@@ -36,6 +36,9 @@ impl Mapper for Mapper003 {
         let addr = addr as usize % self.prg_rom.len();
         self.prg_rom[addr]
     }
+    fn read_prg_ram(&self, addr: u16) -> u8 {
+        todo!()
+    }
 
     fn write_prg_rom(&mut self, addr: u16, data: u8) {
         self.chr_rom_bank = data & 0x3;

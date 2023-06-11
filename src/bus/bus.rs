@@ -90,7 +90,7 @@ impl Bus {
     }
 
     // 无副作用的读，用于调试
-    pub fn cpu_read_debug(&mut self, addr: u16) -> u8 {
+    pub fn cpu_read_debug(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => {
                 // 系统主内存
@@ -133,7 +133,7 @@ impl Bus {
             }
             0x6000..=0x7FFF => {
                 //高三位为4: 存档 SRAM
-                todo!()
+                self.mapper.read_prg_ram(addr)
             }
             0x8000..=0xFFFF => {
                 //高三位为5:  PRG-ROM
@@ -206,6 +206,7 @@ impl Bus {
             }
             0x6000..=0x7FFF => {
                 //高三位为4: 存档 SRAM
+                println!("read SRAM:{:04X}",addr);
                 todo!()
             }
             0x8000..=0xFFFF => {
