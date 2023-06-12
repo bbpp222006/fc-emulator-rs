@@ -484,20 +484,6 @@ impl Ppu {
     }
 
     pub fn step(&mut self) {
-
-        // 更新 PPU 的当前周期和扫描线
-        self.cycles += 1;
-        self.dot += 1;
-        // 奇数帧，dot=340时，跳过dot=0的扫描线
-        if self.dot > 340 {
-            self.dot = 0;
-            self.scanline += 1;
-        }
-        if self.scanline > 261 {
-            self.scanline = 0;
-            self.frame_num += 1;
-        }
-        
         match (self.scanline, self.dot) {
             (0..=239, 0..=255) => {
                 // 像素渲染
@@ -544,9 +530,23 @@ impl Ppu {
             }
             _ => {}
         }
-        
-        
+
+        // 更新 PPU 的当前周期和扫描线
+        self.cycles += 1;
+        self.dot += 1;
+        if self.dot > 340 {
+            self.dot = 0;
+            self.scanline += 1;
+        }
+        // 奇数帧，dot=340时，跳过dot=0的扫描线
+        if self.frame_num % 2 == 1 && self.scanline == 261 && self.dot == 340 && self.bus.borrow().registers.ppumask>>3 & 0b11 != 0{
+            self.dot = 0;
+            self.scanline += 1;
+        }
+        if self.scanline > 261 {
+            self.scanline = 0;
+            self.frame_num += 1;
+        }
     }
 
-    // ... other Ppu methods
 }

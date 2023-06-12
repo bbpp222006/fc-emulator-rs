@@ -200,7 +200,7 @@ impl Cpu {
         //     println!("before:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
         // }
 
-        // if (self.instruction_info.instruction == Instruction::LDA) && (self.instruction_info.addressing_mode == AddressingMode::Absolute){
+        // if (self.instruction_info.instruction == Instruction::ISC) && (self.instruction_info.addressing_mode == AddressingMode::ZeroPage){
         //     println!("{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
         // }
 
@@ -1579,8 +1579,8 @@ impl Cpu {
 
 
         // INC
-        let result = operand.wrapping_add(1);
-        self.write(operand_address, result);
+        let tmp = operand.wrapping_add(1);
+        self.write(operand_address, tmp);
 
 
         // SBC
@@ -1589,12 +1589,12 @@ impl Cpu {
         let borrow = if self.registers.get_flag(StatusFlags::Carry) { 0 } else { 1 };
 
         // 执行减法操作
-        let result = acc.wrapping_sub(result).wrapping_sub(borrow);
+        let result = acc.wrapping_sub(tmp).wrapping_sub(borrow);
 
         // 更新状态寄存器
-        self.registers.set_flag(StatusFlags::Carry, (acc as i16 - operand as i16 - borrow as i16) >= 0);
+        self.registers.set_flag(StatusFlags::Carry, (acc as i16 - tmp as i16 - borrow as i16) >= 0);
         self.check_zsflag(result);
-        self.registers.set_flag(StatusFlags::Overflow, (((acc ^ operand) & (acc ^ result)) & 0x80) != 0);
+        self.registers.set_flag(StatusFlags::Overflow, (((acc ^ tmp) & (acc ^ result)) & 0x80) != 0);
 
         // 更新累加器寄存器
         self.registers.a = result;
