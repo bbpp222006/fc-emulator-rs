@@ -99,33 +99,60 @@ impl Emulator {
     }
 
     pub fn cpu_clock(&mut self) {
-        if self.cpu.cpu_cycle_wait == 0 {
-            self.cpu.step();
-        } else {
-            self.cpu.cpu_cycle_wait -= 1;
-        }
         for _ in 0..3 {
             self.ppu.step();
+        }
+        self.cpu.cpu_cycle_wait -= 1;
+        if self.cpu.cpu_cycle_wait == 0 {
+            self.cpu.step();
         }
     }
 
     pub fn cpu_step(&mut self) {
-        while self.cpu.cpu_cycle_wait != 0 {
-            for _ in 0..3 {
-                self.ppu.step();
-            }
-            self.cpu.cpu_cycle_wait -= 1;
+        while self.cpu.cpu_cycle_wait != 1 {
+            self.cpu_clock();
+        }
+        for _ in 0..3 {
+            self.ppu.step();
         }
         self.cpu.step();
-        while self.cpu.cpu_cycle_wait != 0 {
-            for _ in 0..3 {
-                self.ppu.step();
-            }
-            self.cpu.cpu_cycle_wait -= 1;
+        while self.cpu.cpu_cycle_wait != 1 {
+            self.cpu_clock();
+        }
+    }
+
+    pub fn cpu_clock_debug(&mut self) {
+        for _ in 0..3 {
+            println!("-{}",self.get_log());
+            self.ppu.step();
+        }
+        self.cpu.cpu_cycle_wait -= 1;
+        if self.cpu.cpu_cycle_wait == 0 {
+            println!("*{}",self.get_log());
+            self.cpu.step();
+        }
+    }
+
+    pub fn cpu_step_debug(&mut self) {
+        while self.cpu.cpu_cycle_wait != 1 {
+            self.cpu_clock();
+        }
+        for _ in 0..3 {
+            self.ppu.step();
+        }
+        println!("*{}",self.get_log());
+        self.cpu.step();
+        while self.cpu.cpu_cycle_wait != 1 {
+            self.cpu_clock();
         }
     }
     
     pub fn get_log(&self) -> String {
-        self.cpu.get_current_log()
+        let mut emulator_log_line = self.cpu.get_current_log();
+        emulator_log_line.push_str(format!(" PPU:{:3},{:3} CYC:{}", self.ppu.scanline, self.ppu.dot, self.cpu.cpu_cycle).as_str());
+        emulator_log_line.push_str(format!(" ,$2002:{:02X}", self.cpu.read_debug(0x2002)).as_str());
+        emulator_log_line.push_str(format!(" ,ppustatus_racing:{}",self.bus.borrow().ppustatus_racing).as_str());
+        emulator_log_line
+        // self.cpu.get_current_log()
     }
 }

@@ -484,6 +484,23 @@ impl Ppu {
     }
 
     pub fn step(&mut self) {
+        // 更新 PPU 的当前周期和扫描线
+        self.cycles += 1;
+        self.dot += 1;
+        if self.dot > 340 {
+            self.dot = 0;
+            self.scanline += 1;
+        }
+        // 奇数帧，dot=340时，跳过dot=0的扫描线
+        if self.frame_num % 2 == 1 && self.scanline == 261 && self.dot == 340 && self.bus.borrow().registers.ppumask>>3 & 0b11 != 0{
+            self.dot = 0;
+            self.scanline += 1;
+        }
+        if self.scanline > 261 {
+            self.scanline = 0;
+            self.frame_num += 1;
+        }
+
         match (self.scanline, self.dot) {
             (0..=239, 0..=255) => {
                 // 像素渲染
@@ -512,6 +529,10 @@ impl Ppu {
             (241, 1) => {
                 // 开始vblank
                 self.bus.borrow_mut().registers.ppustatus |= 0x80;
+                self.bus.borrow_mut().ppustatus_racing = true;
+            }
+            (241, 2) => {
+                self.bus.borrow_mut().ppustatus_racing = false;
             }
             (241..=260, 0..=340) => {
                  // vblank期间，如果设置了nmi，那么就设置nmi电平
@@ -523,7 +544,7 @@ impl Ppu {
                     self.bus.borrow_mut().interrupt_status&= 0b11111101;
                 }
             }
-            (261, 0) => {
+            (261, 2) => {
                 // 结束vblank
                 self.bus.borrow_mut().registers.ppustatus &= 0x7f;
                 self.bus.borrow_mut().interrupt_status&= 0b11111101;
@@ -531,22 +552,7 @@ impl Ppu {
             _ => {}
         }
 
-        // 更新 PPU 的当前周期和扫描线
-        self.cycles += 1;
-        self.dot += 1;
-        if self.dot > 340 {
-            self.dot = 0;
-            self.scanline += 1;
-        }
-        // 奇数帧，dot=340时，跳过dot=0的扫描线
-        if self.frame_num % 2 == 1 && self.scanline == 261 && self.dot == 340 && self.bus.borrow().registers.ppumask>>3 & 0b11 != 0{
-            self.dot = 0;
-            self.scanline += 1;
-        }
-        if self.scanline > 261 {
-            self.scanline = 0;
-            self.frame_num += 1;
-        }
+        
     }
 
 }

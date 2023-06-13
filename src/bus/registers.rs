@@ -33,6 +33,7 @@ pub struct Registers {
     // +---------------- vblank标志，当ppu处于vblank时，该标志会被置位，结束或者读取该寄存器会清除该标志
     pub ppustatus: u8,
 
+
     // OAMADDR 寄存器，用于存储 OAM 读写的地址。
     // 7 6 5 4 3 2 1 0
     // a a a a a a a a
@@ -70,6 +71,7 @@ impl Registers {
             ppuaddr: 0,
             ppudata: 0,
             oamdma: 0,
+            
         }
     }
 

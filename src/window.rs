@@ -19,6 +19,7 @@ struct Status {
     paused: bool,
     rom_path: String,
     log_enabled: bool,
+    run_to_cycle: String,
 }
 
 struct CpuState {
@@ -116,6 +117,7 @@ impl MyApp {
                 paused: true,
                 rom_path: String::from(""),
                 log_enabled: false,
+                run_to_cycle: "0".to_string(),
             },
             emulator_state: EmulatorState{
                 cpu_state: CpuState{
@@ -188,6 +190,12 @@ impl MyApp {
             data: self.emulator.ppu.frame_color_index_cache.to_vec(),
             width: 256,
             height: 240,
+        }
+    }
+
+    fn run_to_cycle(&mut self, cycle: u64) {
+        while self.emulator.cpu.cpu_cycle < cycle {
+            self.emulator.cpu_step();
         }
     }
 
@@ -289,11 +297,12 @@ impl eframe::App for MyApp {
             // 按钮使能
             ui.set_enabled(self.window_status.paused);
             if ui.button("cpu单步执行（step）").clicked(){
-                self.emulator.cpu_step();
+                self.emulator.cpu_step_debug();
                 self.update_emulator_state();
+                println!("{}",self.emulator.get_log());
             }
             if ui.button("cpu时钟执行（clock）").clicked(){
-                self.emulator.cpu_clock();
+                self.emulator.cpu_clock_debug();
                 self.update_emulator_state();
             }
             if ui.button("下一帧").clicked(){
@@ -301,6 +310,15 @@ impl eframe::App for MyApp {
                 self.image = self.frame_to_color_image(&new_frame);
                 self.update_emulator_state();
             }
+            // 运行到cyc为止,输入数字
+            ui.horizontal(|ui|  {
+                ui.label("运行到");
+                ui.add( egui::TextEdit::singleline(&mut self.window_status.run_to_cycle).desired_width(100.0));
+                if ui.button("运行").clicked(){
+                    self.run_to_cycle(self.window_status.run_to_cycle.parse::<u64>().unwrap());
+                    self.update_emulator_state();
+                }
+            });
         });
 
         // 右侧状态栏显示cpu、ppu、bus状态

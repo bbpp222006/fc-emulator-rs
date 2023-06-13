@@ -101,7 +101,7 @@ impl Cpu {
             interrupt: Interrupt::default(),
             cpu_cycle: 0,
             instruction_info: InstructionInfo::default(),
-            cpu_cycle_wait: 0,
+            cpu_cycle_wait: 1,
             // cpu_ram: CpuRam::new(),
             // channels: CpuChannels{
             //     cpu2mem_in,
@@ -118,7 +118,7 @@ impl Cpu {
         self.registers.pc = self.read_u16(0xFFFC); // 从内存中读取复位向量
         self.registers.set_flag(StatusFlags::InterruptDisable, true);
         self.cpu_cycle=7;
-        self.cpu_cycle_wait=0;
+        self.cpu_cycle_wait=1;
         self.instruction_info=InstructionInfo::default();
         self.log=String::new();
     }
@@ -200,13 +200,14 @@ impl Cpu {
         //     println!("before:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
         // }
 
-        // if (self.instruction_info.instruction == Instruction::ISC) && (self.instruction_info.addressing_mode == AddressingMode::ZeroPage){
-        //     println!("{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
-        // }
+        if ((self.instruction_info.instruction == Instruction::LDA) && (self.instruction_info.addressing_mode == AddressingMode::Absolute))
+        {
+            println!("{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
+        }
 
         let current_cyc = self.cpu_cycle;
         self.execute();  
-        self.cpu_cycle_wait += self.cpu_cycle-current_cyc; 
+        self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
         // if (self.cpu_cycle==236203)
         //  {
         //     println!("after:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
@@ -227,7 +228,7 @@ impl Cpu {
     } 
 
     // 静态反汇编用
-    fn read_debug(&self, address: u16) -> u8 {
+    pub fn read_debug(&self, address: u16) -> u8 {
         let read_result = self.bus.borrow().cpu_read_debug(address);
         read_result
     }

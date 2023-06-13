@@ -34,6 +34,8 @@ pub struct Bus {
     //   |||| |+---- Reset
     pub interrupt_status: u8, 
     pub registers: registers::Registers,
+    pub ppustatus_racing: bool, // 用于记录ppustatus的读写竞争状态
+
     nametable: nametable::Nametable,
     vram_buffer: u8, // cpu通过PPUDATA 读写VRAM时，需要一个buffer
     vram_addr: u16, // cpu通过PPUSCROLL/PPUADDR 读写VRAM时，需要一个addr
@@ -50,6 +52,7 @@ impl Bus {
         Bus {
             interrupt_status: 0b0000_0000,
             registers: registers::Registers::new(),
+            ppustatus_racing: false,
             nametable: nametable::Nametable::new(),
             vram_buffer: 0,
             vram_addr: 0,
@@ -156,7 +159,15 @@ impl Bus {
                 // 一些附加影响
                 match 0x2000+(addr & 0x0007) as usize {
                     0x2002 => {
+                        out_data = if self.ppustatus_racing { 
+                            self.registers.ppustatus & 0x7F
+                        } else {
+                            self.registers.ppustatus 
+                        };
                         self.registers.ppustatus &= 0x7F; // 读取ppustatus会清除vblank标志
+                        // https://www.nesdev.org/wiki/NMI 读写竞争 
+                        // https://github.com/christopherpow/nes-test-roms/tree/master/ppu_vbl_nmi/source 测试时需要考虑
+                        
                     },
                     0x2004 => {
                         // 读取 OAMDATA 寄存器，进行 OAM 读
