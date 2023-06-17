@@ -172,6 +172,35 @@ impl Cpu {
 
     /// 执行一条指令
     pub fn step(&mut self) {
+        
+        // self.write_interrupt_status();
+        // 解码操作码为指令和寻址模式
+        let opcode = self.read(self.registers.pc);
+        self.instruction_info = decode_opcode(opcode);
+        // if (self.cpu_cycle==236203)
+        //  {
+        //     println!("before:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
+        // }
+
+        if ((self.instruction_info.instruction == Instruction::STA) && (self.instruction_info.addressing_mode == AddressingMode::Absolute) 
+        && (self.read_debug(self.registers.pc+1)==0x00)&&(self.read_debug(self.registers.pc+2)==0x20)||
+        (self.instruction_info.instruction == Instruction::LDA) && (self.instruction_info.addressing_mode == AddressingMode::Immediate)
+        && (self.read_debug(self.registers.pc+1)==0x80))
+        {
+            println!("{},CYC:{},$2000:{:02X} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2000),self.read_debug(0x2002));
+        }
+
+        let current_cyc = self.cpu_cycle;
+        self.execute();  
+        self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
+        // if (self.cpu_cycle==236203)
+        //  {
+        //     println!("after:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
+        // }
+        self.handle_interrupt()
+    }
+
+    fn handle_interrupt(&mut self) {
         self.read_interrupt_status();
         // 如果有复位信号，执行复位
         if self.interrupt.reset {
@@ -182,7 +211,7 @@ impl Cpu {
         // 执行nmi，边缘触发
         if (self.interrupt.nmi.0==true) && (self.interrupt.nmi.1==false)  {
             self.nmi();
-            // println!("nmi!,cycle:{}",self.cpu_cycle);
+            println!("nmi!,cycle:{}",self.cpu_cycle);
         }
         // 如果有irq信号，执行irq
         if self.interrupt.irq && !self.registers.get_flag(StatusFlags::InterruptDisable) {
@@ -191,27 +220,6 @@ impl Cpu {
             self.interrupt.irq = false;
         }
         self.interrupt.nmi.1 = self.interrupt.nmi.0;
-        // self.write_interrupt_status();
-        // 解码操作码为指令和寻址模式
-        let opcode = self.read(self.registers.pc);
-        self.instruction_info = decode_opcode(opcode);
-        // if (self.cpu_cycle==236203)
-        //  {
-        //     println!("before:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
-        // }
-
-        if ((self.instruction_info.instruction == Instruction::LDA) && (self.instruction_info.addressing_mode == AddressingMode::Absolute))
-        {
-            println!("{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
-        }
-
-        let current_cyc = self.cpu_cycle;
-        self.execute();  
-        self.cpu_cycle_wait = self.cpu_cycle-current_cyc; 
-        // if (self.cpu_cycle==236203)
-        //  {
-        //     println!("after:{},CYC:{} ,$2002:{:02X}", self.get_current_log(),self.cpu_cycle,self.read_debug(0x2002));
-        // }
     }
 
         // 反汇编当前结果
